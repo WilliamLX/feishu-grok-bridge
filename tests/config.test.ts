@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { loadConfig, missingRequired, redactSecrets } from '../src/config.js';
 
 describe('loadConfig / missingRequired', () => {
-  it('defaults and fail-closed ALLOW_FROM', () => {
+  it('defaults; empty ALLOW_FROM does not block start (bootstrap)', () => {
     const cfg = loadConfig({
       FEISHU_APP_ID: '',
       FEISHU_APP_SECRET: '',
@@ -12,10 +12,12 @@ describe('loadConfig / missingRequired', () => {
     expect(cfg.allowFrom).toEqual([]);
     expect(cfg.requireMention).toBe(true);
     expect(cfg.grokBackend).toBe('echo');
+    expect(cfg.sessionIdleTtlMs).toBe(3_600_000);
+    expect(cfg.sessionMaxCount).toBe(500);
 
     const miss = missingRequired(cfg, 'start');
     expect(miss.some((m) => m.startsWith('FEISHU_APP_ID'))).toBe(true);
-    expect(miss.some((m) => m.startsWith('ALLOW_FROM'))).toBe(true);
+    expect(miss.some((m) => m.startsWith('ALLOW_FROM'))).toBe(false);
   });
 
   it('parses allowlists and requires webhook for http', () => {
@@ -27,10 +29,14 @@ describe('loadConfig / missingRequired', () => {
       GROK_BACKEND: 'http',
       GROK_BOT_WEBHOOK_URL: '',
       REQUIRE_MENTION: 'false',
+      SESSION_IDLE_TTL_MS: '60000',
+      SESSION_MAX_COUNT: '10',
     } as NodeJS.ProcessEnv);
     expect(cfg.allowFrom).toEqual(['ou_a', 'ou_b']);
     expect(cfg.allowChats).toEqual(['oc_1']);
     expect(cfg.requireMention).toBe(false);
+    expect(cfg.sessionIdleTtlMs).toBe(60_000);
+    expect(cfg.sessionMaxCount).toBe(10);
     const miss = missingRequired(cfg, 'doctor');
     expect(miss.some((m) => m.includes('GROK_BOT_WEBHOOK_URL'))).toBe(true);
   });

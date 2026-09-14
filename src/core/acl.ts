@@ -1,5 +1,5 @@
 export type AclConfig = {
-  /** open_id allowlist. Empty = deny ALL. */
+  /** open_id allowlist. Empty = deny ALL (except runtime bootstrap path). */
   allowFrom: string[];
   /** chat_id allowlist. Empty = allow any chat (still gated by allowFrom). */
   allowChats: string[];
@@ -20,7 +20,8 @@ export type AclDecision =
 
 /**
  * Security policy:
- * - ALLOW_FROM empty → deny everyone (fail-closed).
+ * - ALLOW_FROM empty → deny everyone (fail-closed). Bootstrap `/whoami` is
+ *   handled separately in BridgeCore before this check.
  * - ALLOW_CHATS non-empty → chat must be listed.
  * - Groups with REQUIRE_MENTION → must @mention bot.
  */
@@ -29,7 +30,7 @@ export function checkAcl(cfg: AclConfig, input: AclInput): AclDecision {
     return {
       allowed: false,
       reason:
-        'ALLOW_FROM is empty — all users denied. Set ALLOW_FROM to a comma-separated open_id allowlist.',
+        'ALLOW_FROM is empty — all users denied. DM /whoami to bootstrap, then set ALLOW_FROM.',
     };
   }
 
@@ -47,4 +48,21 @@ export function checkAcl(cfg: AclConfig, input: AclInput): AclDecision {
   }
 
   return { allowed: true };
+}
+
+/** User-facing ACL denial — short, non-leaky (no allowlist contents / ids). */
+export function aclDenyUserMessage(reason: string): string | null {
+  // Stay silent for "not mentioned" — normal group chatter.
+  if (reason.includes('without @bot mention')) return null;
+
+  if (reason.includes('ALLOW_FROM is empty')) {
+    return '⛔ Bridge is in bootstrap mode (ALLOW_FROM empty). DM `/whoami`, then set ALLOW_FROM and restart.';
+  }
+  if (reason.includes('not in ALLOW_FROM')) {
+    return '⛔ Not authorized. Ask an admin to add your open_id to ALLOW_FROM (DM `/whoami` to see it).';
+  }
+  if (reason.includes('not in ALLOW_CHATS')) {
+    return '⛔ This chat is not on the allowlist (ALLOW_CHATS).';
+  }
+  return '⛔ Not authorized.';
 }

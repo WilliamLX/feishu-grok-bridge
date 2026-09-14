@@ -24,9 +24,11 @@ flowchart LR
 ## 功能 Features
 
 - WebSocket 事件订阅（`im.message.receive_v1`），支持单聊 DM 与群聊 `@机器人`
+- 启动时通过 `bot/v3/info` 解析机器人 `open_id`，用于精确 `@` 匹配
 - 多轮会话（按 `chat_id`）、命令：`/help` `/new` `/status` `/whoami` `/stop`
 - 后端：`EchoBackend`（冒烟）、`HttpBackend`（Webhook JSON / SSE）、`CursorAgentBackend`（stub）
-- 安全：`ALLOW_FROM` **空 = 拒绝所有人**；`ALLOW_CHATS`；群聊 `REQUIRE_MENTION`
+- 安全：`ALLOW_FROM` **空 = 拒绝普通对话**（fail-closed）；允许 bootstrap `/whoami`；`ALLOW_CHATS`；群聊 `REQUIRE_MENTION`
+- 内存会话：空闲淘汰 + 最大会话数；**进程重启清空**会话与去重状态（无 Redis）
 - CLI：`doctor` / `start` / `status`
 
 ---
@@ -46,7 +48,10 @@ flowchart LR
 5. **机器人**：启用机器人能力；可配置默认名称/描述。
 6. **版本管理与发布**：创建版本 → 申请线上发布 → 管理员审批通过后，企业内可用。
 7. 把机器人拉进群；单聊可直接搜机器人发消息。
-8. 在飞书对机器人发 `/whoami`，把返回的 `open_id` 写入 `ALLOW_FROM`（必填，否则拒绝所有人）。
+8. **Bootstrap ALLOW_FROM（打破鸡生蛋）**：
+   1. 可先保持 `ALLOW_FROM` 为空，执行 `npm run start`（普通聊天仍被拒绝）。
+   2. 在飞书 **私聊** 机器人发送 `/whoami`（bootstrap 例外，ACL 放行）。
+   3. 把返回的 `open_id` 写入 `.env` 的 `ALLOW_FROM`，重启 bridge。
 
 > 国际版 Lark 将 `FEISHU_DOMAIN=lark`。
 
@@ -64,7 +69,7 @@ cp .env.example .env
 |------|------|
 | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 应用凭证（必填） |
 | `FEISHU_DOMAIN` | `feishu`（默认）或 `lark` |
-| `ALLOW_FROM` | 用户 `open_id` 白名单，逗号分隔。**空 = 拒绝所有人** |
+| `ALLOW_FROM` | 用户 `open_id` 白名单，逗号分隔。**空 = 拒绝普通对话**；仍可用 DM `/whoami` bootstrap |
 | `ALLOW_CHATS` | `chat_id` 白名单；空 = 不限制会话（仍受 `ALLOW_FROM` 约束） |
 | `REQUIRE_MENTION` | 群聊是否必须 @机器人，默认 `true` |
 | `GROK_BACKEND` | `echo` \| `http` \| `cursor-agent` |
@@ -72,10 +77,12 @@ cp .env.example .env
 | `GROK_BOT_WEBHOOK_TOKEN` | 可选 Bearer Token |
 | `GROK_HTTP_TIMEOUT_MS` | HTTP 超时，默认 120000 |
 | `SESSION_MAX_HISTORY` | 每会话保留历史条数 |
+| `SESSION_IDLE_TTL_MS` | 会话空闲淘汰（默认 1h） |
+| `SESSION_MAX_COUNT` | 内存会话上限（默认 500） |
 | `DEDUPE_TTL_MS` | 事件去重 TTL |
 | `LOG_LEVEL` | `debug` \| `info` \| `warn` \| `error` |
 
-密钥只来自环境变量；日志中密钥会被脱敏（`***`）。
+密钥只来自环境变量；日志中密钥会被脱敏（`***`）。后端异常只记服务端日志，飞书侧仅短安全提示。
 
 ---
 
@@ -85,7 +92,7 @@ cp .env.example .env
 cd /workspace/feishu-grok-bridge   # or your clone path
 npm install
 npm test
-npm run doctor          # 检查缺失配置 / 探测 tenant_access_token
+npm run doctor          # 检查缺失配置 / 探测 tenant_access_token + bot open_id
 # 编辑 .env 后：
 npm run dev             # tsx watch → start
 # 或
@@ -97,7 +104,8 @@ npm run build && npm start
 ```bash
 # .env
 GROK_BACKEND=echo
-ALLOW_FROM=ou_xxxxxxxx   # 从 /whoami 获取
+# 可先留空 ALLOW_FROM，start 后 DM /whoami，再填入：
+ALLOW_FROM=ou_xxxxxxxx
 FEISHU_APP_ID=...
 FEISHU_APP_SECRET=...
 
@@ -162,7 +170,7 @@ http.createServer(async (req, res) => {
 | `/help` | 帮助 |
 | `/new` | 新会话（清空历史） |
 | `/status` | Bridge + 本会话状态 |
-| `/whoami` | 显示 `open_id` / `chat_id` |
+| `/whoami` | 显示 `open_id` / `chat_id`（`ALLOW_FROM` 为空时也可 bootstrap） |
 | `/stop` | 暂停本会话（`/new` 恢复） |
 
 ---
@@ -203,9 +211,11 @@ feishu-grok-bridge/
 
 ## 安全说明
 
-- **`ALLOW_FROM` 为空时拒绝所有用户**（fail-closed）。上线前务必用 `/whoami` 填入自己的 `open_id`。
-- 群聊默认需要 @机器人（`REQUIRE_MENTION=true`）。
-- 不要把 `.env` 提交进 Git；`.gitignore` 已忽略。
+- **`ALLOW_FROM` 为空时拒绝普通对话**（fail-closed）。可先 `start`，再 DM `/whoami` 取 `open_id` 填入后重启。
+- 群聊默认需要 @机器人（`REQUIRE_MENTION=true`），且需启动时成功解析 bot `open_id`；未知 bot id 时不会把任意 @ 当成对自己的提及。
+- ACL 拒绝时回复简短提示（不泄露白名单内容）；未 @ 的群消息保持静默。
+- 后端错误详情只写服务端日志，飞书用户只看到通用失败文案。
+- 会话与事件去重均在内存中；**重启进程即清空**。不要把 `.env` 提交进 Git；`.gitignore` 已忽略。
 
 ---
 

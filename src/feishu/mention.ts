@@ -33,6 +33,9 @@ type MessageEventLike = {
  * Parse text message content JSON `{"text":"..."}` and detect @bot.
  * Bot mentions in Feishu use keys like `@_user_1` mapped in `mentions[]`
  * where mention id equals the bot's open_id (or empty for @all).
+ *
+ * When `botOpenId` is omitted, `mentionedBot` stays false — callers must not
+ * treat arbitrary mentions as addressing the bot.
  */
 export function parseMentions(
   event: MessageEventLike,
@@ -54,13 +57,8 @@ export function parseMentions(
   }
 
   let mentionedBot = false;
-  for (const m of mentions) {
-    // Feishu bot self-mention: id often equals bot open_id
-    if (botOpenId && m.id && m.id === botOpenId) {
-      mentionedBot = true;
-    }
-    // Some payloads use id starting with "ou_" for users; bot open_id also ou_
-    // Fallback: if mentions exist and chat is group, treat any mention of bot name pattern
+  if (botOpenId) {
+    mentionedBot = mentions.some((m) => m.id && m.id === botOpenId);
   }
 
   // Strip mention placeholders like @_user_1 from text
@@ -71,12 +69,6 @@ export function parseMentions(
   }
   // Also strip common leftover patterns
   text = text.replace(/@_user_\d+/g, '').replace(/\s+/g, ' ').trim();
-
-  // If no botOpenId configured, heuristics: any mention whose name looks like bot
-  // or presence of mentions when only the bot is mentioned
-  if (!mentionedBot && botOpenId) {
-    mentionedBot = mentions.some((m) => m.id === botOpenId);
-  }
 
   return { text, mentionedBot, mentions };
 }

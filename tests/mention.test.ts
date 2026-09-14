@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { parseMentions, isAddressedToBot } from '../src/feishu/mention.js';
 
 describe('parseMentions', () => {
-  it('strips mention keys and detects bot', () => {
+  it('strips mention keys and detects bot when botOpenId known', () => {
     const info = parseMentions(
       {
         message: {
@@ -14,6 +14,31 @@ describe('parseMentions', () => {
     );
     expect(info.mentionedBot).toBe(true);
     expect(info.text).toBe('please help');
+  });
+
+  it('does not treat other user mentions as bot when botOpenId known', () => {
+    const info = parseMentions(
+      {
+        message: {
+          content: JSON.stringify({ text: '@_user_1 hi' }),
+          mentions: [{ key: '@_user_1', id: 'ou_alice', name: 'Alice' }],
+        },
+      },
+      'ou_bot',
+    );
+    expect(info.mentionedBot).toBe(false);
+    expect(info.text).toBe('hi');
+  });
+
+  it('mentionedBot stays false when botOpenId unknown (no false positives)', () => {
+    const info = parseMentions({
+      message: {
+        content: JSON.stringify({ text: '@_user_1 ping' }),
+        mentions: [{ key: '@_user_1', id: 'ou_someone', name: 'Someone' }],
+      },
+    });
+    expect(info.mentionedBot).toBe(false);
+    expect(info.text).toBe('ping');
   });
 
   it('handles plain content without mentions', () => {

@@ -2,7 +2,7 @@ import type * as lark from '@larksuiteoapi/node-sdk';
 import type { AppConfig } from '../config.js';
 import type { GrokBackend } from '../backend/types.js';
 import { MemorySessionStore } from './session.js';
-import { checkAcl } from './acl.js';
+import { checkAcl, aclDenyUserMessage } from './acl.js';
 import { DedupeStore } from './dedupe.js';
 import { ChatConcurrency } from './concurrency.js';
 import { parseCommand, helpText } from './commands.js';
@@ -17,6 +17,11 @@ export type BridgeDeps = {
   backend: GrokBackend;
   botOpenId?: string;
 };
+
+/** Safe user-facing backend failure — details stay in server logs only. */
+export function sanitizeBackendErrorForUser(_err: unknown): string {
+  return '⚠️ Something went wrong talking to the backend. Please try again later.';
+}
 
 export class BridgeCore {
   private readonly cfg: AppConfig;
@@ -33,7 +38,11 @@ export class BridgeCore {
     this.client = deps.client;
     this.backend = deps.backend;
     this.botOpenId = deps.botOpenId;
-    this.sessions = new MemorySessionStore(deps.cfg.sessionMaxHistory);
+    this.sessions = new MemorySessionStore({
+      maxHistory: deps.cfg.sessionMaxHistory,
+      idleTtlMs: deps.cfg.sessionIdleTtlMs,
+      maxSessions: deps.cfg.sessionMaxCount,
+    });
     this.dedupe = new DedupeStore(deps.cfg.dedupeTtlMs);
     this.concurrency = new ChatConcurrency();
   }
@@ -51,6 +60,7 @@ export class BridgeCore {
       pendingChats: this.concurrency.pendingCount(),
       allowFromCount: this.cfg.allowFrom.length,
       allowChatsCount: this.cfg.allowChats.length,
+      botOpenIdKnown: Boolean(this.botOpenId),
     };
   }
 
@@ -75,20 +85,40 @@ export class BridgeCore {
       this.botOpenId,
     );
 
-    // For groups without explicit bot open_id match, if mentions array is
-    // non-empty and text was stripped, treat as mentioned when botOpenId unknown
+    // Exact bot open_id match only. When botOpenId is unknown, do NOT treat
+    // arbitrary @mentions as addressing us (avoids REQUIRE_MENTION false positives).
     let mentionedBot = mentionInfo.mentionedBot;
-    if (
-      !mentionedBot &&
-      !this.botOpenId &&
-      msg.chatType !== 'p2p' &&
-      msg.mentions.length > 0
-    ) {
-      // Conservative: any @mention in group counts when we can't resolve bot id
-      mentionedBot = true;
-    }
     if (msg.chatType === 'p2p') {
       mentionedBot = true;
+    }
+    if (
+      msg.chatType !== 'p2p' &&
+      this.cfg.requireMention &&
+      !this.botOpenId &&
+      !mentionedBot
+    ) {
+      log.warn('REQUIRE_MENTION=true but botOpenId unknown — ignoring group msg', {
+        chatId: msg.chatId,
+      });
+    }
+
+    const text = mentionInfo.text.trim();
+    const parsed = text ? parseCommand(text) : null;
+
+    // Bootstrap: empty ALLOW_FROM still permits /whoami (prefer DM) so operators
+    // can discover their open_id without a chicken-egg lockout.
+    const isWhoami =
+      parsed?.type === 'command' && parsed.name === 'whoami';
+    const bootstrapWhoami =
+      this.cfg.allowFrom.length === 0 && isWhoami && Boolean(text);
+
+    if (bootstrapWhoami) {
+      log.info('bootstrap /whoami allowed (ALLOW_FROM empty)', {
+        openId: msg.openId,
+        chatType: msg.chatType,
+      });
+      await this.handleCommand(msg, 'whoami', '');
+      return;
     }
 
     const acl = checkAcl(
@@ -107,16 +137,19 @@ export class BridgeCore {
 
     if (!acl.allowed) {
       log.info('ACL denied', { reason: acl.reason, openId: msg.openId, chatId: msg.chatId });
+      const userMsg = aclDenyUserMessage(acl.reason);
+      // Only reply when we would have been addressed (DM or @bot), to avoid group spam
+      if (userMsg && (msg.chatType === 'p2p' || mentionedBot)) {
+        await this.reply(msg, userMsg, 'Access');
+      }
       return;
     }
 
-    const text = mentionInfo.text.trim();
-    if (!text) {
+    if (!text || !parsed) {
       log.debug('empty text after mention strip');
       return;
     }
 
-    const parsed = parseCommand(text);
     if (parsed.type === 'command') {
       await this.handleCommand(msg, parsed.name, parsed.args);
       return;
@@ -158,7 +191,7 @@ export class BridgeCore {
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
       log.error('backend error', { error: err });
-      await this.reply(msg, `⚠️ Backend error: ${err}`, 'Error');
+      await this.reply(msg, sanitizeBackendErrorForUser(e), 'Error');
     }
   }
 
@@ -189,6 +222,7 @@ export class BridgeCore {
           `uptime: ${st.uptimeSec}s`,
           `sessions: ${st.sessions}`,
           `pending chats: ${st.pendingChats}`,
+          `bot open_id known: ${st.botOpenIdKnown}`,
           '',
           `**This chat**`,
           `session: \`${s.sessionId}\``,
@@ -199,12 +233,15 @@ export class BridgeCore {
         return;
       }
       case 'whoami': {
+        const bootstrapHint =
+          this.cfg.allowFrom.length === 0
+            ? '\n\n**Bootstrap:** 将 `open_id` 写入 `.env` 的 `ALLOW_FROM` 后重启 bridge。'
+            : '\n\n将 `open_id` 加入 `ALLOW_FROM`，可选将 `chat_id` 加入 `ALLOW_CHATS`。';
         const body = [
           `open_id: \`${msg.openId}\``,
           `chat_id: \`${msg.chatId}\``,
           `chat_type: \`${msg.chatType}\``,
-          '',
-          '将 `open_id` 加入 `ALLOW_FROM`，可选将 `chat_id` 加入 `ALLOW_CHATS`。',
+          bootstrapHint,
         ].join('\n');
         await this.reply(msg, body, 'Who Am I');
         return;
