@@ -1,0 +1,43 @@
+{
+  "name": "feishu-grok-bridge",
+  "version": "1.0.0",
+  "description": "Feishu/Lark ↔ Grok Bot remote-control bridge via WebSocket long connection",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "feishu-grok-bridge": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "dev": "tsx watch src/cli/index.ts start",
+    "start": "node dist/cli/index.js start",
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "doctor": "tsx src/cli/index.ts doctor",
+    "status": "tsx src/cli/index.ts status",
+    "prestart": "npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "feishu",
+    "lark",
+    "grok",
+    "bot",
+    "websocket"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.40.0",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
