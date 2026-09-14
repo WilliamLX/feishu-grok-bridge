@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { checkAcl, type AclConfig } from '../src/core/acl.js';
+import { checkAcl, aclDenyUserMessage, type AclConfig } from '../src/core/acl.js';
 
 const base: AclConfig = {
   allowFrom: ['ou_alice', 'ou_bob'],
@@ -81,5 +81,25 @@ describe('checkAcl', () => {
       { openId: 'ou_alice', chatId: 'oc_g', chatType: 'group', mentionedBot: false },
     );
     expect(r.allowed).toBe(true);
+  });
+});
+
+describe('aclDenyUserMessage', () => {
+  it('stays silent for missing @mention', () => {
+    expect(
+      aclDenyUserMessage('group message without @bot mention (REQUIRE_MENTION=true)'),
+    ).toBeNull();
+  });
+
+  it('returns non-leaky bootstrap / deny hints', () => {
+    const empty = aclDenyUserMessage(
+      'ALLOW_FROM is empty — all users denied. DM /whoami to bootstrap, then set ALLOW_FROM.',
+    );
+    expect(empty).toMatch(/bootstrap/i);
+    expect(empty).not.toMatch(/ou_/);
+
+    const denied = aclDenyUserMessage('open_id not in ALLOW_FROM: ou_eve');
+    expect(denied).toMatch(/Not authorized/);
+    expect(denied).not.toContain('ou_eve');
   });
 });

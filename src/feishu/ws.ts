@@ -70,9 +70,54 @@ export function startWsClient(opts: {
   };
 }
 
+/**
+ * Pull a stable event id from Feishu WS / EventDispatcher payloads.
+ * SDK may pass the inner `event` only, or a wrapped envelope with `header`.
+ */
+export function extractEventId(data: unknown, fallbackMessageId: string): string {
+  if (!data || typeof data !== 'object') return fallbackMessageId;
+  const root = data as Record<string, unknown>;
+
+  const asString = (v: unknown): string | undefined =>
+    typeof v === 'string' && v.trim() ? v.trim() : undefined;
+
+  const header = root.header;
+  const headerObj =
+    header && typeof header === 'object' ? (header as Record<string, unknown>) : undefined;
+
+  const nestedEvent = root.event;
+  const nestedObj =
+    nestedEvent && typeof nestedEvent === 'object'
+      ? (nestedEvent as Record<string, unknown>)
+      : undefined;
+
+  const candidates: unknown[] = [
+    root.event_id,
+    root.eventId,
+    headerObj?.event_id,
+    headerObj?.eventId,
+    root.$event_id,
+    // Some dispatcher builds attach meta
+    (root as { _event_id?: unknown })._event_id,
+    nestedObj?.event_id,
+  ];
+
+  for (const c of candidates) {
+    const s = asString(c);
+    if (s) return s;
+  }
+  return fallbackMessageId;
+}
+
 /** Normalize SDK event payload into IncomingMessage. Exported for tests. */
 export function normalizeReceiveV1(data: unknown): IncomingMessage | null {
-  const d = data as {
+  // Accept either bare event body or { header, event } envelope
+  const root = (data ?? {}) as Record<string, unknown>;
+  const nested =
+    root.event && typeof root.event === 'object'
+      ? (root.event as Record<string, unknown>)
+      : undefined;
+  const body = (nested ?? root) as {
     sender?: {
       sender_id?: { open_id?: string; user_id?: string };
       sender_type?: string;
@@ -89,7 +134,7 @@ export function normalizeReceiveV1(data: unknown): IncomingMessage | null {
     };
   };
 
-  const message = d.message;
+  const message = body.message;
   if (!message?.message_id || !message.chat_id) return null;
 
   // Only handle text for MVP
@@ -97,13 +142,11 @@ export function normalizeReceiveV1(data: unknown): IncomingMessage | null {
     return null;
   }
 
-  const openId = d.sender?.sender_id?.open_id ?? '';
+  const openId = body.sender?.sender_id?.open_id ?? '';
   // Ignore bot/system senders without open_id
   if (!openId) return null;
 
-  const eventId =
-    (data as { event_id?: string }).event_id ??
-    message.message_id;
+  const eventId = extractEventId(data, message.message_id);
 
   return {
     eventId,

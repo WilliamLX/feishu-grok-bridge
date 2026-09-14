@@ -19,7 +19,12 @@ export async function runStatus(): Promise<number> {
     for (const m of missing) console.log(`  - missing: ${m}`);
     return 1;
   }
-  console.log('State: READY (start with `npm run start` or `npm run dev`)');
+  if (cfg.allowFrom.length === 0) {
+    console.log('State: READY (bootstrap) — start bridge, DM `/whoami`, set ALLOW_FROM, restart');
+  } else {
+    console.log('State: READY (start with `npm run start` or `npm run dev`)');
+  }
   console.log('Runtime metrics: send `/status` to the bot in Feishu while running.');
+  console.log('Note: in-memory sessions/dedupe clear on process restart.');
   return 0;
 }

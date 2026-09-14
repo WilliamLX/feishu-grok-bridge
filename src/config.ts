@@ -33,6 +33,8 @@ const EnvSchema = z.object({
   GROK_BOT_WEBHOOK_TOKEN: z.string().optional().default(''),
   GROK_HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
   SESSION_MAX_HISTORY: z.coerce.number().int().positive().default(20),
+  SESSION_IDLE_TTL_MS: z.coerce.number().int().positive().default(3_600_000),
+  SESSION_MAX_COUNT: z.coerce.number().int().positive().default(500),
   DEDUPE_TTL_MS: z.coerce.number().int().positive().default(300_000),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 });
@@ -49,6 +51,8 @@ export type AppConfig = {
   grokBotWebhookToken: string;
   grokHttpTimeoutMs: number;
   sessionMaxHistory: number;
+  sessionIdleTtlMs: number;
+  sessionMaxCount: number;
   dedupeTtlMs: number;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
 };
@@ -67,12 +71,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     grokBotWebhookToken: parsed.GROK_BOT_WEBHOOK_TOKEN,
     grokHttpTimeoutMs: parsed.GROK_HTTP_TIMEOUT_MS,
     sessionMaxHistory: parsed.SESSION_MAX_HISTORY,
+    sessionIdleTtlMs: parsed.SESSION_IDLE_TTL_MS,
+    sessionMaxCount: parsed.SESSION_MAX_COUNT,
     dedupeTtlMs: parsed.DEDUPE_TTL_MS,
     logLevel: parsed.LOG_LEVEL,
   };
 }
 
-/** Missing required env keys for a given mode. Never returns secret values. */
+/**
+ * Missing required env keys for a given mode. Never returns secret values.
+ * ALLOW_FROM is intentionally NOT required for start — empty allowlist stays
+ * fail-closed for normal chat, but bootstrap `/whoami` is permitted at runtime.
+ */
 export function missingRequired(cfg: AppConfig, mode: 'doctor' | 'start' = 'start'): string[] {
   const missing: string[] = [];
   if (!cfg.feishuAppId) missing.push('FEISHU_APP_ID');
@@ -80,11 +90,7 @@ export function missingRequired(cfg: AppConfig, mode: 'doctor' | 'start' = 'star
   if (cfg.grokBackend === 'http' && !cfg.grokBotWebhookUrl) {
     missing.push('GROK_BOT_WEBHOOK_URL (required when GROK_BACKEND=http)');
   }
-  if (mode === 'start' && cfg.allowFrom.length === 0) {
-    missing.push(
-      'ALLOW_FROM (empty deny-all; set comma-separated open_id list to allow users)',
-    );
-  }
+  void mode;
   return missing;
 }
 
@@ -101,6 +107,8 @@ export function redactSecrets(cfg: AppConfig): Record<string, unknown> {
     grokBotWebhookToken: cfg.grokBotWebhookToken ? '***' : '(empty)',
     grokHttpTimeoutMs: cfg.grokHttpTimeoutMs,
     sessionMaxHistory: cfg.sessionMaxHistory,
+    sessionIdleTtlMs: cfg.sessionIdleTtlMs,
+    sessionMaxCount: cfg.sessionMaxCount,
     dedupeTtlMs: cfg.dedupeTtlMs,
     logLevel: cfg.logLevel,
   };
