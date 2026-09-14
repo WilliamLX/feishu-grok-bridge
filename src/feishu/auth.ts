@@ -7,6 +7,29 @@ export function domainBase(domain: FeishuDomain): string {
   return domain === 'lark' ? 'https://open.larksuite.com' : 'https://open.feishu.cn';
 }
 
+
+export const DEFAULT_FEISHU_HTTP_TIMEOUT_MS = 10_000;
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new Error(`Feishu HTTP timeout after ${timeoutMs}ms`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+
 export function createLarkClient(opts: {
   appId: string;
   appSecret: string;
@@ -30,18 +53,25 @@ export async function fetchTenantTokenHttp(opts: {
   appId: string;
   appSecret: string;
   domain: FeishuDomain;
+  /** Bound HTTP wait so doctor/start cannot hang forever (default 10s). */
+  timeoutMs?: number;
 }): Promise<{ ok: boolean; expire?: number; token?: string; error?: string }> {
   const base = domainBase(opts.domain);
   const url = `${base}/open-apis/auth/v3/tenant_access_token/internal`;
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_FEISHU_HTTP_TIMEOUT_MS;
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        app_id: opts.appId,
-        app_secret: opts.appSecret,
-      }),
-    });
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          app_id: opts.appId,
+          app_secret: opts.appSecret,
+        }),
+      },
+      timeoutMs,
+    );
     const json = (await res.json()) as {
       code?: number;
       msg?: string;
@@ -74,10 +104,13 @@ export async function fetchBotInfo(opts: {
   domain: FeishuDomain;
   /** Optional pre-fetched token to avoid a second auth round-trip. */
   tenantAccessToken?: string;
+  /** Bound HTTP wait so start cannot hang forever (default 10s). */
+  timeoutMs?: number;
 }): Promise<{ ok: boolean; openId?: string; appName?: string; error?: string }> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_FEISHU_HTTP_TIMEOUT_MS;
   let token = opts.tenantAccessToken;
   if (!token) {
-    const auth = await fetchTenantTokenHttp(opts);
+    const auth = await fetchTenantTokenHttp({ ...opts, timeoutMs });
     if (!auth.ok || !auth.token) {
       return { ok: false, error: auth.error ?? 'tenant_access_token failed' };
     }
@@ -87,10 +120,14 @@ export async function fetchBotInfo(opts: {
   const base = domainBase(opts.domain);
   const url = `${base}/open-apis/bot/v3/info`;
   try {
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      },
+      timeoutMs,
+    );
     const json = (await res.json()) as {
       code?: number;
       msg?: string;

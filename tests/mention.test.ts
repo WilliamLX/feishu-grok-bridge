@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseMentions, isAddressedToBot } from '../src/feishu/mention.js';
+import { parseMentions, isAddressedToBot, normalizeMentionId } from '../src/feishu/mention.js';
 
 describe('parseMentions', () => {
   it('strips mention keys and detects bot when botOpenId known', () => {
@@ -41,6 +41,29 @@ describe('parseMentions', () => {
     expect(info.text).toBe('ping');
   });
 
+
+  it('normalizes mentions[].id object {open_id} to string', () => {
+    const info = parseMentions(
+      {
+        message: {
+          content: JSON.stringify({ text: '@_user_1 please help' }),
+          mentions: [
+            {
+              key: '@_user_1',
+              // Real Feishu payload shape
+              id: { open_id: 'ou_bot', user_id: 'u_bot' },
+              name: 'Grok',
+            },
+          ],
+        },
+      },
+      'ou_bot',
+    );
+    expect(info.mentionedBot).toBe(true);
+    expect(info.mentions[0]?.id).toBe('ou_bot');
+    expect(info.text).toBe('please help');
+  });
+
   it('handles plain content without mentions', () => {
     const info = parseMentions({
       message: { content: JSON.stringify({ text: 'hi' }), mentions: [] },
@@ -64,5 +87,14 @@ describe('isAddressedToBot', () => {
     expect(
       isAddressedToBot({ chatType: 'group', mentionedBot: true, requireMention: true }),
     ).toBe(true);
+  });
+});
+
+describe('normalizeMentionId', () => {
+  it('accepts string and {open_id} object', () => {
+    expect(normalizeMentionId('ou_x')).toBe('ou_x');
+    expect(normalizeMentionId({ open_id: 'ou_y' })).toBe('ou_y');
+    expect(normalizeMentionId({ user_id: 'only_user' })).toBe('');
+    expect(normalizeMentionId(undefined)).toBe('');
   });
 });

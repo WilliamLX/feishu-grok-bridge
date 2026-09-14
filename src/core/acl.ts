@@ -59,7 +59,8 @@ export function aclDenyUserMessage(reason: string): string | null {
     return '⛔ Bridge is in bootstrap mode (ALLOW_FROM empty). DM `/whoami`, then set ALLOW_FROM and restart.';
   }
   if (reason.includes('not in ALLOW_FROM')) {
-    return '⛔ Not authorized. Ask an admin to add your open_id to ALLOW_FROM (DM `/whoami` to see it).';
+    // Do not suggest /whoami here — when ALLOW_FROM is non-empty, ACL also blocks /whoami.
+    return '⛔ Not authorized. Ask an admin to add your open_id to ALLOW_FROM.';
   }
   if (reason.includes('not in ALLOW_CHATS')) {
     return '⛔ This chat is not on the allowlist (ALLOW_CHATS).';

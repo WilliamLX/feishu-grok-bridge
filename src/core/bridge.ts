@@ -109,8 +109,12 @@ export class BridgeCore {
     // can discover their open_id without a chicken-egg lockout.
     const isWhoami =
       parsed?.type === 'command' && parsed.name === 'whoami';
+    // DM-only: do not let group /whoami bypass ALLOW_CHATS / REQUIRE_MENTION.
     const bootstrapWhoami =
-      this.cfg.allowFrom.length === 0 && isWhoami && Boolean(text);
+      this.cfg.allowFrom.length === 0 &&
+      isWhoami &&
+      Boolean(text) &&
+      msg.chatType === 'p2p';
 
     if (bootstrapWhoami) {
       log.info('bootstrap /whoami allowed (ALLOW_FROM empty)', {
