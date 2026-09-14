@@ -11,12 +11,25 @@ export type MentionInfo = {
   mentions: Array<{ key: string; id: string; name?: string }>;
 };
 
+type FeishuMentionId = string | { open_id?: string; user_id?: string; union_id?: string };
+
 type FeishuMention = {
   key?: string;
-  id?: string;
+  id?: FeishuMentionId;
   name?: string;
   tenant_key?: string;
 };
+
+/** Feishu often sends mentions[].id as `{ open_id }` — normalize to string open_id. */
+export function normalizeMentionId(id: FeishuMentionId | undefined | null): string {
+  if (id == null) return '';
+  if (typeof id === 'string') return id.trim();
+  if (typeof id === 'object') {
+    const openId = id.open_id;
+    if (typeof openId === 'string' && openId.trim()) return openId.trim();
+  }
+  return '';
+}
 
 type MessageEventLike = {
   message?: {
@@ -43,7 +56,7 @@ export function parseMentions(
 ): MentionInfo {
   const mentions = (event.message?.mentions ?? []).map((m) => ({
     key: m.key ?? '',
-    id: m.id ?? '',
+    id: normalizeMentionId(m.id),
     name: m.name,
   }));
 

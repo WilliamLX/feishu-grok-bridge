@@ -32,10 +32,12 @@ export async function runStart(): Promise<void> {
   });
 
   let botOpenId: string | undefined;
+  // Bound so a stalled Feishu HTTP call cannot block WS startup forever.
   const botInfo = await fetchBotInfo({
     appId: cfg.feishuAppId,
     appSecret: cfg.feishuAppSecret,
     domain: cfg.feishuDomain,
+    timeoutMs: 10_000,
   });
   if (botInfo.ok && botInfo.openId) {
     botOpenId = botInfo.openId;

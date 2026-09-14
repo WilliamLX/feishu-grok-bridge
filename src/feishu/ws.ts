@@ -1,5 +1,6 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import { log } from '../logger.js';
+import { normalizeMentionId } from './mention.js';
 
 export type IncomingMessage = {
   eventId: string;
@@ -128,7 +129,11 @@ export function normalizeReceiveV1(data: unknown): IncomingMessage | null {
       chat_type?: string;
       content?: string;
       message_type?: string;
-      mentions?: Array<{ key?: string; id?: string; name?: string }>;
+      mentions?: Array<{
+        key?: string;
+        id?: string | { open_id?: string; user_id?: string; union_id?: string };
+        name?: string;
+      }>;
       parent_id?: string;
       create_time?: string;
     };
@@ -155,7 +160,11 @@ export function normalizeReceiveV1(data: unknown): IncomingMessage | null {
     chatType: message.chat_type ?? 'p2p',
     openId,
     contentRaw: message.content ?? '',
-    mentions: message.mentions ?? [],
+    mentions: (message.mentions ?? []).map((m) => ({
+      key: m.key,
+      id: normalizeMentionId(m.id),
+      name: m.name,
+    })),
     parentId: message.parent_id,
     createTime: message.create_time,
   };

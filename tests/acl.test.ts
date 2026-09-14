@@ -101,5 +101,7 @@ describe('aclDenyUserMessage', () => {
     const denied = aclDenyUserMessage('open_id not in ALLOW_FROM: ou_eve');
     expect(denied).toMatch(/Not authorized/);
     expect(denied).not.toContain('ou_eve');
+    // When allowlist is non-empty, ACL also blocks /whoami — do not advertise it.
+    expect(denied).not.toMatch(/whoami/i);
   });
 });

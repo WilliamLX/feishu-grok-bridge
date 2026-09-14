@@ -175,4 +175,76 @@ describe('BridgeCore ACL / mention / bootstrap', () => {
     expect(joined).not.toMatch(/token=abc|INTERNAL leak/);
     expect(joined).toMatch(/backend|wrong|try again/i);
   });
+
+  it('rejects bootstrap /whoami in group when ALLOW_FROM empty (DM-only)', async () => {
+    const bridge = new BridgeCore({
+      cfg: baseCfg({ allowFrom: [] }),
+      client,
+      backend,
+      botOpenId: 'ou_bot',
+    });
+    const contents = await captureReply(
+      bridge,
+      msg({
+        openId: 'ou_newbie',
+        chatType: 'group',
+        chatId: 'oc_g',
+        contentRaw: JSON.stringify({ text: '/whoami' }),
+        mentions: [{ key: '@_user_1', id: 'ou_bot', name: 'Bot' }],
+      }),
+    );
+    // Should not run whoami command successfully with open_id body in bootstrap sense —
+    // ACL deny / bootstrap skip. Backend must not run.
+    expect(backend.handle).not.toHaveBeenCalled();
+    // Either silent/deny, but must NOT return whoami open_id dump as bootstrap success
+    const joined = contents.join('\n');
+    expect(joined).not.toMatch(/Bootstrap:/);
+  });
+
+  it('group: object-shaped mention id {open_id} counts as bot mention', async () => {
+    const bridge = new BridgeCore({
+      cfg: baseCfg(),
+      client,
+      backend,
+      botOpenId: 'ou_bot',
+    });
+    await captureReply(
+      bridge,
+      msg({
+        eventId: 'ev_obj_mention',
+        chatType: 'group',
+        chatId: 'oc_g',
+        contentRaw: JSON.stringify({ text: '@_user_1 hi' }),
+        mentions: [
+          {
+            key: '@_user_1',
+            id: { open_id: 'ou_bot' } as unknown as string,
+            name: 'Bot',
+          },
+        ],
+      }),
+    );
+    expect(backend.handle).toHaveBeenCalled();
+  });
+
+  it('ACL deny copy when allowlist non-empty does not tell user to /whoami', async () => {
+    const bridge = new BridgeCore({
+      cfg: baseCfg({ allowFrom: ['ou_alice'] }),
+      client,
+      backend,
+      botOpenId: 'ou_bot',
+    });
+    const contents = await captureReply(
+      bridge,
+      msg({
+        openId: 'ou_eve',
+        contentRaw: JSON.stringify({ text: 'hi' }),
+      }),
+    );
+    expect(backend.handle).not.toHaveBeenCalled();
+    const joined = contents.join('\n');
+    expect(joined).toMatch(/Not authorized|authorized/i);
+    expect(joined).not.toMatch(/whoami/i);
+  });
+
 });

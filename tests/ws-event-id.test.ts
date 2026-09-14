@@ -44,4 +44,26 @@ describe('normalizeReceiveV1', () => {
     const msg = normalizeReceiveV1(baseMsg);
     expect(msg?.eventId).toBe('om_1');
   });
+
+  it('normalizes mentions[].id object to string open_id', () => {
+    const msg = normalizeReceiveV1({
+      ...baseMsg,
+      message: {
+        ...baseMsg.message,
+        chat_type: 'group',
+        content: JSON.stringify({ text: '@_user_1 hi' }),
+        mentions: [
+          {
+            key: '@_user_1',
+            id: { open_id: 'ou_bot', user_id: 'u_bot' },
+            name: 'Bot',
+          },
+        ],
+      },
+    });
+    expect(msg?.mentions).toEqual([
+      { key: '@_user_1', id: 'ou_bot', name: 'Bot' },
+    ]);
+  });
+
 });
