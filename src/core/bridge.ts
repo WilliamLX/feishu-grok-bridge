@@ -7,7 +7,7 @@ import { DedupeStore } from './dedupe.js';
 import { ChatConcurrency } from './concurrency.js';
 import { parseCommand, helpText } from './commands.js';
 import { parseMentions } from '../feishu/mention.js';
-import { replyPreferCard, buildReplyCard } from '../feishu/message.js';
+import { replyPreferCard, buildReplyCard, replyText } from '../feishu/message.js';
 import type { IncomingMessage } from '../feishu/ws.js';
 import { log } from '../logger.js';
 
@@ -22,6 +22,9 @@ export type BridgeDeps = {
 export function sanitizeBackendErrorForUser(_err: unknown): string {
   return '⚠️ Something went wrong talking to the backend. Please try again later.';
 }
+
+/** Immediate Feishu ack before awaiting HttpBackend / outbox. */
+export const PROCESSING_ACK_TEXT = '收到，正在处理中';
 
 export class BridgeCore {
   private readonly cfg: AppConfig;
@@ -172,6 +175,12 @@ export class BridgeCore {
     });
 
     const fresh = this.sessions.get(msg.chatId);
+
+    // Immediate ack after ACL/mention pass; final answer arrives later.
+    // Per-chat ChatConcurrency serializes process() so a second message cannot
+    // reorder or steal this turn's in-progress session work.
+    await this.replyProcessingAck(msg);
+
     try {
       const result = await this.backend.handle({
         sessionId: fresh.sessionId,
@@ -253,6 +262,18 @@ export class BridgeCore {
       }
       default:
         await this.reply(msg, helpText(), 'Help');
+    }
+  }
+
+  /** Lightweight text ack — not a card — so the user sees progress immediately. */
+  private async replyProcessingAck(msg: IncomingMessage): Promise<void> {
+    const res = await replyText(this.client, {
+      messageId: msg.messageId,
+      text: PROCESSING_ACK_TEXT,
+    });
+    if (!res.ok) {
+      // Non-fatal: still proceed to backend; user may only see the final reply.
+      log.warn('processing ack failed', { error: res.error, messageId: msg.messageId });
     }
   }
 
