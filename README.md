@@ -77,7 +77,7 @@ cp .env.example .env
 | `GROK_BOT_WEBHOOK_URL` | `http` 后端 POST 地址 |
 | `GROK_BOT_WEBHOOK_TOKEN` | 可选 Bearer Token |
 | `GROK_HTTP_TIMEOUT_MS` | HTTP 超时，默认 120000 |
-| `BOT_CATALOG_PATH` | Bot 目录 JSON，默认 `bots.json`（见 `bots.example.json`） |
+| `BOT_CATALOG_PATH` | Bot 目录 JSON，默认 `bots.json`（见 `bots.example.json`）。每个 `id` 必须是 sendPrompt 用的真实 Grok Bot agent UUID；示例文件里的 `grok-main` / `grok-code` 仅为占位 |
 | `BINDING_STORE_PATH` | `chat_id → agent_id` 持久化文件，默认 `data/bindings.json`；删除该文件即重置绑定 |
 | `SESSION_MAX_HISTORY` | 每会话保留历史条数 |
 | `SESSION_IDLE_TTL_MS` | 会话空闲淘汰（默认 1h） |
@@ -139,7 +139,7 @@ curl -sS -X POST "$GROK_BOT_WEBHOOK_URL" \
   }'
 ```
 
-- 中继必须按请求体里的 `agentId` 路由；未知/缺失时返回错误（建议 4xx + `unknown agent`），**禁止静默落到默认 Bot**。
+- 中继（`relay/server.mjs`）必须按请求体里的 `agentId` 路由：缺失 → `400`；目录已加载且未知 → `404`（`unknown agent`）。**禁止静默落到默认 Bot**（不读 `GROK_BOT_AGENT_ID`）。详见 `relay/README.md`。
 
 - JSON：`{"reply":"……"}`（也接受 `message` 字段）
 - 或 SSE：`data: {"reply":"……"}` / `data: {"delta":"…"}` 流式拼接
@@ -192,7 +192,9 @@ feishu-grok-bridge/
 │   ├── cli/              # doctor · start · status
 │   ├── core/             # session · acl · commands · dedupe · concurrency · bridge · bots · binding
 │   ├── feishu/           # auth · ws · message · mention · card
-├── bots.json / bots.example.json
+├── bots.json / bots.example.json  # id = 真实 agent UUID（示例为占位）
+├── relay/                # HttpBackend → gateway 中继（POST /turn 要求 agentId）
+├── inbox/ outbox/ archive/  # 中继作业目录（gitignored）
 ├── data/                 # bindings.json（gitignored）
 │   ├── im/               # 未来多 IM 适配（钉钉 stub）
 │   ├── config.ts
