@@ -13,6 +13,7 @@ export class EchoBackend implements GrokBackend {
         `session: \`${req.sessionId}\``,
         `chat: \`${req.chatId}\``,
         `user: \`${req.userId}\``,
+        `agent: \`${req.agentId ?? '(none)'}\``,
         `history: ${histLen} turns`,
         ``,
         `> ${req.text}`,

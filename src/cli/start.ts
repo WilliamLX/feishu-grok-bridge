@@ -4,6 +4,8 @@ import { createLarkClient, fetchBotInfo } from '../feishu/auth.js';
 import { startWsClient } from '../feishu/ws.js';
 import { createBackend } from '../backend/index.js';
 import { BridgeCore } from '../core/bridge.js';
+import { loadBotCatalogFromPath } from '../core/bots.js';
+import { FileBindingStore } from '../core/binding.js';
 
 export async function runStart(): Promise<void> {
   const cfg = loadConfig();
@@ -32,7 +34,6 @@ export async function runStart(): Promise<void> {
   });
 
   let botOpenId: string | undefined;
-  // Bound so a stalled Feishu HTTP call cannot block WS startup forever.
   const botInfo = await fetchBotInfo({
     appId: cfg.feishuAppId,
     appSecret: cfg.feishuAppSecret,
@@ -48,14 +49,34 @@ export async function runStart(): Promise<void> {
     );
   }
 
+  const { catalog, warning: catalogWarning } = loadBotCatalogFromPath(cfg.botCatalogPath);
+  if (catalogWarning) {
+    log.warn('bot catalog not loaded — chat will fail-closed until a valid catalog exists', {
+      error: catalogWarning,
+      path: cfg.botCatalogPath,
+    });
+  } else {
+    log.info('bot catalog loaded', {
+      path: cfg.botCatalogPath,
+      enabled: catalog.listEnabled().length,
+    });
+  }
+
+  const bindings = new FileBindingStore(cfg.bindingStorePath);
+  log.info('binding store ready', {
+    path: cfg.bindingStorePath,
+    size: bindings.size(),
+  });
+
   const backend = createBackend(cfg);
-  const bridge = new BridgeCore({ cfg, client, backend, botOpenId });
+  const bridge = new BridgeCore({ cfg, client, backend, botOpenId, catalog, bindings });
 
   const ws = startWsClient({
     appId: cfg.feishuAppId,
     appSecret: cfg.feishuAppSecret,
     domain: cfg.feishuDomain,
     onMessage: (msg) => bridge.handleIncoming(msg),
+    onCardAction: (action) => bridge.handleCardAction(action),
   });
 
   const shutdown = () => {
@@ -68,8 +89,9 @@ export async function runStart(): Promise<void> {
 
   log.info(`bridge online — backend=${backend.name}`, {
     botOpenIdKnown: Boolean(botOpenId),
+    catalogSize: catalog.listEnabled().length,
+    bindingsSize: bindings.size(),
   });
-  // Keep process alive
   await new Promise(() => {
     /* run until signal */
   });

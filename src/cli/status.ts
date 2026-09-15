@@ -25,6 +25,8 @@ export async function runStatus(): Promise<number> {
     console.log('State: READY (start with `npm run start` or `npm run dev`)');
   }
   console.log('Runtime metrics: send `/status` to the bot in Feishu while running.');
-  console.log('Note: in-memory sessions/dedupe clear on process restart.');
+  console.log(`Bot catalog: ${cfg.botCatalogPath}`);
+  console.log(`Bindings file: ${cfg.bindingStorePath} (delete to reset chat→agent bindings)`);
+  console.log('Note: in-memory sessions/dedupe clear on process restart; bindings persist on disk.');
   return 0;
 }

@@ -11,11 +11,12 @@ describe('parseCommand', () => {
   });
 
   it('captures args', () => {
-    expect(parseCommand('/new foo bar')).toEqual({
+    expect(parseCommand('/bot grok-main')).toEqual({
       type: 'command',
-      name: 'new',
-      args: 'foo bar',
+      name: 'bot',
+      args: 'grok-main',
     });
+    expect(parseCommand('/bots')).toEqual({ type: 'command', name: 'bots', args: '' });
   });
 
   it('treats unknown slash as message', () => {
@@ -34,7 +35,7 @@ describe('parseCommand', () => {
 describe('helpText / isKnownCommand', () => {
   it('help mentions all commands', () => {
     const h = helpText();
-    for (const c of ['/help', '/new', '/status', '/whoami', '/stop']) {
+    for (const c of ['/help', '/new', '/status', '/whoami', '/stop', '/bots', '/bot']) {
       expect(h).toContain(c);
     }
   });

@@ -1,6 +1,7 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import { log } from '../logger.js';
 import { normalizeMentionId } from './mention.js';
+import { normalizeCardAction, type IncomingCardAction } from './card.js';
 
 export type IncomingMessage = {
   eventId: string;
@@ -15,6 +16,7 @@ export type IncomingMessage = {
 };
 
 export type MessageHandler = (msg: IncomingMessage) => Promise<void>;
+export type CardActionHandler = (action: IncomingCardAction) => Promise<void>;
 
 /**
  * Start Feishu/Lark WebSocket long-connection event client.
@@ -25,10 +27,11 @@ export function startWsClient(opts: {
   appSecret: string;
   domain: 'feishu' | 'lark';
   onMessage: MessageHandler;
+  onCardAction?: CardActionHandler;
 }): { stop: () => void } {
   const domain = opts.domain === 'lark' ? lark.Domain.Lark : lark.Domain.Feishu;
 
-  const eventDispatcher = new lark.EventDispatcher({}).register({
+  const handlers: Record<string, (data: unknown) => Promise<unknown>> = {
     'im.message.receive_v1': async (data) => {
       try {
         const msg = normalizeReceiveV1(data);
@@ -43,7 +46,28 @@ export function startWsClient(opts: {
         });
       }
     },
-  });
+  };
+
+  if (opts.onCardAction) {
+    handlers['card.action.trigger'] = async (data) => {
+      try {
+        const action = normalizeCardAction(data);
+        if (!action) {
+          log.debug('ignored malformed card action');
+          return;
+        }
+        await opts.onCardAction!(action);
+      } catch (e) {
+        log.error('card action handler error', {
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    };
+  }
+
+  const eventDispatcher = new lark.EventDispatcher({}).register(
+    handlers as unknown as Parameters<lark.EventDispatcher['register']>[0],
+  );
 
   const wsClient = new lark.WSClient({
     appId: opts.appId,

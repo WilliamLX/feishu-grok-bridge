@@ -1,4 +1,5 @@
 import type { BackendRequest, BackendReply, GrokBackend } from './types.js';
+import { UnknownAgentError } from '../core/bots.js';
 import { log } from '../logger.js';
 
 export type HttpBackendOptions = {
@@ -19,6 +20,9 @@ export function shapeHttpRequest(req: BackendRequest): Record<string, unknown> {
     userId: req.userId,
     text: req.text,
   };
+  if (req.agentId) {
+    body.agentId = req.agentId;
+  }
   if (req.history && req.history.length > 0) {
     body.history = req.history;
   }
@@ -114,6 +118,9 @@ export class HttpBackend implements GrokBackend {
   }
 
   async handle(req: BackendRequest): Promise<BackendReply> {
+    if (!req.agentId?.trim()) {
+      throw new Error('HttpBackend: agentId is required (no default bot)');
+    }
     const body = shapeHttpRequest(req);
     const headers: Record<string, string> = {
       'content-type': 'application/json',
@@ -137,6 +144,9 @@ export class HttpBackend implements GrokBackend {
 
       if (!res.ok) {
         const errBody = await res.text().catch(() => '');
+        if (/unknown agent|invalid agent|agent not found|no such agent/i.test(errBody)) {
+          throw new UnknownAgentError(req.agentId);
+        }
         throw new Error(
           `HttpBackend: HTTP ${res.status} ${res.statusText}${errBody ? ` — ${errBody.slice(0, 200)}` : ''}`,
         );

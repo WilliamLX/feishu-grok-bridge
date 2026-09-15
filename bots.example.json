@@ -1,0 +1,16 @@
+{
+  "bots": [
+    {
+      "id": "grok-main",
+      "name": "Grok",
+      "description": "主对话 Agent（请改成中继真实 agentId）",
+      "enabled": true
+    },
+    {
+      "id": "grok-code",
+      "name": "Grok Code",
+      "description": "示例第二个 Agent（请改成中继真实 agentId）",
+      "enabled": true
+    }
+  ]
+}
