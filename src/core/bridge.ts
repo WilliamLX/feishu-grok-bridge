@@ -105,9 +105,20 @@ export class BridgeCore {
       return;
     }
 
-    this.abortInFlightIfBotSwitch(msg);
+    const epochBefore = this.bindings.epoch(msg.chatId);
+    const switchEpoch = this.abortInFlightIfBotSwitch(msg);
+    const expectedEpoch = switchEpoch ?? epochBefore;
 
-    await this.concurrency.run(msg.chatId, () => this.process(msg));
+    await this.concurrency.run(msg.chatId, async () => {
+      if (this.bindings.epoch(msg.chatId) !== expectedEpoch) {
+        log.info('dropped stale queued event after bot switch', {
+          chatId: msg.chatId,
+          eventId: msg.eventId,
+        });
+        return;
+      }
+      await this.process(msg, switchEpoch !== undefined);
+    });
   }
 
   async handleCardAction(action: IncomingCardAction): Promise<void> {
@@ -149,22 +160,31 @@ export class BridgeCore {
       return;
     }
 
+    const epochBefore = this.bindings.epoch(action.chatId);
     const bot = this.catalog.getEnabled(action.agentId);
     if (bot) {
       this.bindings.bind(action.chatId, bot.id);
       this.sessions.reset(action.chatId);
     }
+    const expectedEpoch = bot ? this.bindings.epoch(action.chatId) : epochBefore;
 
-    await this.concurrency.run(action.chatId, () =>
-      this.applyBotSelection(addressed, action.agentId ?? ''),
-    );
+    await this.concurrency.run(action.chatId, async () => {
+      if (this.bindings.epoch(action.chatId) !== expectedEpoch) {
+        log.info('dropped stale card action after bot switch', {
+          chatId: action.chatId,
+          eventId: action.eventId,
+        });
+        return;
+      }
+      await this.applyBotSelection(addressed, action.agentId ?? '', Boolean(bot));
+    });
   }
 
   /**
    * Valid `/bot <id>` must bump epoch immediately so an in-flight turn on the
    * same chat cannot later post the old agent's reply.
    */
-  private abortInFlightIfBotSwitch(msg: IncomingMessage): void {
+  private abortInFlightIfBotSwitch(msg: IncomingMessage): number | undefined {
     const mentionInfo = parseMentions(
       {
         message: {
@@ -180,9 +200,9 @@ export class BridgeCore {
 
     const text = mentionInfo.text.trim();
     const parsed = text ? parseCommand(text) : null;
-    if (parsed?.type !== 'command' || parsed.name !== 'bot') return;
+    if (parsed?.type !== 'command' || parsed.name !== 'bot') return undefined;
     const agentId = parsed.args.trim();
-    if (!agentId) return;
+    if (!agentId) return undefined;
 
     const acl = checkAcl(
       {
@@ -197,17 +217,18 @@ export class BridgeCore {
         mentionedBot,
       },
     );
-    if (!acl.allowed) return;
+    if (!acl.allowed) return undefined;
 
     const bot = this.catalog.getEnabled(agentId);
-    if (!bot) return;
+    if (!bot) return undefined;
 
     this.bindings.bind(msg.chatId, bot.id);
     this.sessions.reset(msg.chatId);
     log.info('bot switch abort in-flight', { chatId: msg.chatId, agentId: bot.id });
+    return this.bindings.epoch(msg.chatId);
   }
 
-  private async process(msg: IncomingMessage): Promise<void> {
+  private async process(msg: IncomingMessage, botSwitchPreApplied = false): Promise<void> {
     const mentionInfo = parseMentions(
       {
         message: {
@@ -283,7 +304,7 @@ export class BridgeCore {
     }
 
     if (parsed.type === 'command') {
-      await this.handleCommand(msg, parsed.name, parsed.args);
+      await this.handleCommand(msg, parsed.name, parsed.args, botSwitchPreApplied);
       return;
     }
 
@@ -372,6 +393,7 @@ export class BridgeCore {
     msg: IncomingMessage,
     name: string,
     args: string,
+    botSwitchPreApplied = false,
   ): Promise<void> {
     switch (name) {
       case 'help':
@@ -448,7 +470,7 @@ export class BridgeCore {
           await this.replyBotList(msg);
           return;
         }
-        await this.applyBotSelection(msg, id);
+        await this.applyBotSelection(msg, id, botSwitchPreApplied);
         return;
       }
       default:
@@ -478,15 +500,21 @@ export class BridgeCore {
     );
   }
 
-  private async applyBotSelection(msg: Addressable, agentId: string): Promise<void> {
+  private async applyBotSelection(
+    msg: Addressable,
+    agentId: string,
+    alreadyApplied = false,
+  ): Promise<void> {
     const bot = this.catalog.getEnabled(agentId);
     if (!bot) {
       log.warn('reject unknown agentId (no default fallback)', { agentId, chatId: msg.chatId });
       await this.reply(msg, userUnknownAgentMessage(agentId), 'Bot');
       return;
     }
-    this.bindings.bind(msg.chatId, bot.id);
-    this.sessions.reset(msg.chatId);
+    if (!alreadyApplied) {
+      this.bindings.bind(msg.chatId, bot.id);
+      this.sessions.reset(msg.chatId);
+    }
     await this.reply(
       msg,
       `已绑定 **${bot.name}** (\`${bot.id}\`)。\n新会话已开始；之后的消息都会发给该 Bot。切换 Bot 会清空历史。`,

@@ -22,10 +22,6 @@ type FileShape = {
   bindings: Record<string, ChatBinding>;
 };
 
-function emptyFile(): FileShape {
-  return { version: 1, bindings: {} };
-}
-
 /**
  * JSON-file persistence for chat_id → agent_id.
  * Epoch is process-local (in-flight cancellation); restart has no in-flight turns.

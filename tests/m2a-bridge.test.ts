@@ -68,6 +68,7 @@ describe('M2a select bot / bind / fail-closed', () => {
       msg({ contentRaw: JSON.stringify({ text: `/bot ${TEST_BOT.id}` }) }),
     );
     expect(bindings.get('oc_1')?.agentId).toBe(TEST_BOT.id);
+    expect(bindings.epoch('oc_1')).toBe(1);
     expect(backend.handle).not.toHaveBeenCalled();
 
     await bridge.handleIncoming(
@@ -225,6 +226,60 @@ describe('M2a select bot / bind / fail-closed', () => {
 
     const joined = replyContents(client).join('\n');
     expect(joined).not.toMatch(/OLD-AGENT-SHOULD-NOT-POST/);
+    expect(bindings.get('oc_1')?.agentId).toBe(TEST_BOT_B.id);
+    expect(bindings.epoch('oc_1')).toBe(2);
+  });
+
+  it('drops messages queued before a bot switch instead of rerouting them', async () => {
+    let resolveFirst!: (v: { reply: string }) => void;
+    const backend: GrokBackend = {
+      name: 'slow',
+      handle: vi.fn((req) => {
+        if (req.text === 'first') {
+          return new Promise<{ reply: string }>((resolve) => {
+            resolveFirst = resolve;
+          });
+        }
+        return Promise.resolve({ reply: `reply:${req.agentId}:${req.text}` });
+      }),
+    };
+    const bindings = testBindings(['oc_1'], TEST_BOT.id);
+    const bridge = new BridgeCore({
+      cfg: baseCfg(),
+      client,
+      backend,
+      botOpenId: 'ou_bot',
+      catalog: testCatalog(),
+      bindings,
+    });
+
+    const first = bridge.handleIncoming(
+      msg({
+        eventId: 'ev_first',
+        contentRaw: JSON.stringify({ text: 'first' }),
+      }),
+    );
+    await vi.waitFor(() => expect(backend.handle).toHaveBeenCalledOnce());
+
+    const queued = bridge.handleIncoming(
+      msg({
+        eventId: 'ev_queued',
+        contentRaw: JSON.stringify({ text: 'queued-before-switch' }),
+      }),
+    );
+    const switched = bridge.handleIncoming(
+      msg({
+        eventId: 'ev_switch_queued',
+        messageId: 'om_switch_queued',
+        contentRaw: JSON.stringify({ text: `/bot ${TEST_BOT_B.id}` }),
+      }),
+    );
+
+    resolveFirst({ reply: 'old-reply' });
+    await Promise.all([first, queued, switched]);
+
+    expect(backend.handle).toHaveBeenCalledOnce();
+    expect(replyContents(client).join('\n')).not.toMatch(/queued-before-switch/);
     expect(bindings.get('oc_1')?.agentId).toBe(TEST_BOT_B.id);
   });
 
