@@ -5,7 +5,7 @@
 - 仓库：https://github.com/WilliamLX/feishu-grok-bridge
 - Notion PRD：https://app.notion.com/p/3db5e183fd02818d8e85c044d83628c5
 - Notion M2 评估：https://app.notion.com/p/3dc5e183fd0281d39abae42b5a9031cc
-- 更新日：2026-09-15
+- 更新日：2026-09-15（下一步锁定：§11 Ops）
 
 ---
 
@@ -15,7 +15,7 @@
 | --- | --- | --- |
 | V1（HttpBackend + mention/ACL + 处理中提示） | ✅ 已正式收口 | main `fbf68e6`；PR #1/#3/#2 已合；飞书联调 + 审核通过 |
 | **M2a（单聊选 Bot）** | ✅ 正式结案 | PR #5 闭环；联调 + 审核收口完成 |
-| **运维清单（Ops）** | 🟡 进行中 | 单实例 / bots.json / 发版回调 / 坏 agentId 4xx |
+| **运维清单（Ops）** | 🟡 **下一步（进行中）** | 方法/架构见 §11；补全并验证后才开 M2b |
 | M2b（多选组群 + @ 路由） | ⬜ 后置 | Bridge 约 4–6.5 / 产品 5–8；建群权限提前单独开 |
 
 **当前目标**：先完成 **运维清单（Ops）**，再开 M2b。CursorAgent 真接通、钉钉实现仍后置。
@@ -186,49 +186,156 @@
 
 ---
 
-## 11. 运维清单（Ops · M2a 后 / M2b 前）
+## 11. 下一步：运维清单落地（Ops）
 
-> 目标：把联调踩过的坑写成可执行 checklist，降低下次重启/换人踩坑。完成后勾选。
+> **范围锁定（2026-09-15）**：下一步只做本节省内容——把现网可运行、可交接、可回归写清楚并验证。  
+> **不做**：M2b 建群、CursorAgent 真接通、钉钉实现。  
+> **完成定义**：§11.6 验收表全绿 + 本文件勾选完成；再另开 M2b。
 
-### 11.1 进程与启动
+### 11.1 目标与交付物
 
-- [ ] **单实例**：启动前确认无残留 bridge 进程（多实例会导致 `/bots` 被旧进程当普通聊天 →「处理中」+ backend Error）
-- [ ] 记录推荐启动命令（`npm run dev` / `npm start` / systemd / docker — 以现网为准）
-- [ ] 启动后确认日志：`WS ready`、`catalogSize` 符合预期
-- [ ] 中继 `:8787` 与 bridge 一并重启的顺序写清
+| 交付物 | 说明 |
+| --- | --- |
+| 本文 §11 勾选完成 | 操作步骤可被第二人按文档独立跑通 |
+| `bots.json` 现网正确 | 真实 agent UUID，enabled 明确 |
+| 启动/停机 Runbook | 单实例、bridge + 中继顺序 |
+| 飞书发版/回调备忘 | 含审批；避免再踩卡片超时 |
+| 冒烟脚本/命令 | 每次重启后 5 分钟内可验 |
 
-### 11.2 bots.json / Agent 目录
+### 11.2 现网架构（方法前提）
 
-- [ ] 生产 `bots.json` 使用**真实** Agent UUID（勿用 example 占位）
-- [ ] 至少维护：`id`、显示名、描述、enabled
-- [ ] 变更目录后需重启/热加载规则写明
-- [ ] 联调曾用：DingDing `d84209f0-28d9-4485-86fb-85795e6510ec`；SE001 `ad78b5fa-4212-4476-a83a-e0ed29e5918b`（以现网文件为准）
+```
+飞书用户
+  │  WS 长连接（无需公网 IP）
+  │  事件：im.message.receive_v1
+  │        card.action.trigger（卡片按钮，需发版+审批）
+  ▼
+Bridge（Node，feishu-grok-bridge）
+  ├─ ACL：ALLOW_FROM fail-closed；群 REQUIRE_MENTION
+  ├─ Commands：/bots /bot /new /status /help /whoami /stop …
+  ├─ BindingStore：chat_id → agentId（默认 data/bindings.json）
+  ├─ BotCatalog：bots.json（id = 真实 Grok Bot agent UUID）
+  ├─ Session + 串行队列 + 处理中 ack（入站立刻回）
+  └─ HttpBackend ─POST /turn─► Relay :8787
+                                  │  body 必填 agentId
+                                  │  缺失 → 400；目录未知 → 404
+                                  │  禁止静默默认 Bot
+                                  ▼
+                               inbox/ → sendPrompt(agentId)
+                                  ▼
+                               指定 Grok Bot / Agent
+                                  ▼
+                               outbox/ → Relay 回 Bridge → 飞书卡片/文本
+```
 
-### 11.3 飞书开放平台 / 发版
+**关键不变量**
 
-- [ ] 事件订阅含：`im.message.receive_v1`、`card.action.trigger`（长连接）
-- [ ] **发版后须企业审批通过**才生效；未审批会出现卡片回调超时/不可用
-- [ ] 版本说明建议注明：启用卡片回调
-- [ ] 应用可用性范围（当前可选成员含管理员）变更有记录
-- [ ] 文档链：应用事件/回调页、版本管理页
+1. 一 chat 一 Agent（绑定持久化；`/new` 清历史不清绑定）
+2. 切换 Bot：清会话 + epoch，旧 Agent 在途回复丢弃
+3. 中继只信请求体 `agentId`，不读 `GROK_BOT_AGENT_ID` 做默认
+4. 任意时刻只跑 **一个** bridge 进程（多实例会把 `/bots` 当普通聊天）
 
-### 11.4 安全与错误
+### 11.3 关键路径与配置
 
-- [ ] 坏 / 缺失 `agentId`：**必须 4xx**，禁止静默落到默认 Bot
-- [ ] `ALLOW_FROM` 空 = 拒绝所有人（fail-closed）仍成立
-- [ ] 密钥不进日志明文；`.env` 不进 Git
+| 项 | 默认 / 现网约定 |
+| --- | --- |
+| 仓库 | `feishu-grok-bridge`（main） |
+| Bot 目录 | `BOT_CATALOG_PATH` → `bots.json`（参考 `bots.example.json`） |
+| 绑定文件 | `BINDING_STORE_PATH` → `data/bindings.json`（gitignore） |
+| 中继 | `relay/server.mjs`，`127.0.0.1:8787`（`GROK_RELAY_PORT`） |
+| HttpBackend | `GROK_BACKEND=http`，`GROK_BOT_WEBHOOK_URL=http://127.0.0.1:8787/turn` |
+| Gateway | 中继读 `/home/box/agent-data/gateway.json`（`GROK_GATEWAY_JSON`） |
+| 飞书应用 | `cli_aa2d797daeb81cc1`（Grok Bot）；版本含 `card.action.trigger` 须发布并审批 |
 
-### 11.5 回归冒烟（每次发版/重启后）
+联调曾用 Bot（以现网 `bots.json` 为准）：
 
-- [ ] `/bots` 出列表或卡片（不出现处理中→backend Error）
-- [ ] `/bot <A>` 能聊；`/bot <B>` 切会话清且打到 B
-- [ ] 普通消息仍先「收到，正在处理中」再最终回复
-- [ ] （可选）卡片按钮选 Bot 一次
+- A DingDing：`d84209f0-28d9-4485-86fb-85795e6510ec`
+- B SE001：`ad78b5fa-4212-4476-a83a-e0ed29e5918b`
 
-### 11.6 M2b 前置（单独做，不绑功能 PR）
+### 11.4 操作方法（Runbook）
 
-- [ ] 飞书建群 / 拉机器人入群相关权限申请并审批通过
-- [ ] 权限验收通过后再开 M2b 开发
+#### A. 启动前：保证单实例
+
+```bash
+# 查出旧 bridge（按实际启动命令调整）
+pgrep -af 'feishu-grok-bridge|tsx.*cli|node.*dist/cli' || true
+# 有残留则杀掉，只留一份
+```
+
+- [ ] 启动前无第二份 bridge
+- [ ] 中继同样确认只监听一个 `:8787`
+
+#### B. 启动顺序（建议）
+
+1. 确认 `.env`：`GROK_BACKEND=http`、webhook 指向中继、`ALLOW_FROM` 已填
+2. 确认 `bots.json` 为真实 UUID 且 `enabled: true`
+3. 启动中继：`node relay/server.mjs`（或项目文档中的等价命令）
+4. 启动 bridge：`npm run dev` 或 `npm start`
+5. 日志应见：中继 catalog loaded / bridge WS ready、`catalogSize` 正确
+
+- [ ] 按序启动成功
+- [ ] 写下本机实际命令到本节备注（由 DingDing 补）
+
+#### C. 更新 bots.json
+
+1. 复制 `bots.example.json` → `bots.json`（若尚无）
+2. 每个 `id` 换成真实 agent UUID；设 `enabled`
+3. **重启 bridge + 中继**（中继启动时加载目录；bridge 亦读目录）
+4. `/bots` 核对列表
+
+- [ ] 现网 `bots.json` 已核对
+- [ ] 变更流程写入 README 交叉链接（可选）
+
+#### D. 飞书卡片回调（若要用按钮）
+
+1. 开放平台 → 事件订阅：长连接 + `card.action.trigger`
+2. 版本管理 → 创建版本 → 申请发布 → **企业审批通过**
+3. 未审批常见现象：点按钮「目标回调服务超时」或要求配置回调
+
+- [ ] 文档写明：审批是硬条件
+- [ ] 命令路径 `/bot <id>` 作为无卡片时的降级（M2a 已验收）
+
+#### E. 停机 / 重启
+
+1. 先停 bridge，再停中继（或反之，但勿双 bridge）
+2. 重启后跑 §11.5 冒烟
+3. 绑定文件默认保留；要重置绑定则删 `data/bindings.json`
+
+- [ ] 停机顺序写清（由现网负责人补一条）
+
+### 11.5 回归冒烟（每次发版/重启后，约 5 分钟）
+
+- [ ] `/bots`：出列表/卡片；**无**「处理中→backend Error」
+- [ ] `/bot <A>` → 发一句能聊；有「正在处理中」再最终回复
+- [ ] `/bot <B>` → 提示绑定切换；会话清；新消息打到 B
+- [ ] （可选）卡片点选 Bot 一次
+- [ ] （可选）中继：缺 agentId → 400；假 UUID → 404（`relay/test-agentid.mjs`）
+
+### 11.6 Ops 验收表（本步硬门禁）
+
+| # | 项 | 负责人 | 状态 |
+| --- | --- | --- | --- |
+| O1 | 单实例启动写清且可复现 | DingDing | ⬜ |
+| O2 | `bots.json` 真实 UUID + 加载验证 | DingDing | ⬜ |
+| O3 | 发版/卡片回调/审批备忘完整 | DingDing + 产品 | ⬜ |
+| O4 | 坏/缺 agentId 必 4xx（有命令可复测） | DingDing + 审核 | ⬜ |
+| O5 | §11.5 冒烟全绿一次并记录日期 | William 或指定人 | ⬜ |
+| O6 | M2b 建群权限**单独**申请路径写明（只文档，不开发） | 产品 + DingDing | ⬜ |
+
+### 11.7 工作拆分（轻量）
+
+| 角色 | 动作 |
+| --- | --- |
+| 产品经理 | 锁定范围；维护本 §11；验收口径 |
+| DingDing to Grok Bot | 补现网命令、路径、实际 pgrep/启动行；跑中继 4xx 复测 |
+| Software Engineer 001 | 核对 README 与代码路径一致；必要时小 PR 修文档 |
+| 开发审核工程师 | 按 O1–O5 收口；不通过则指出缺哪条可执行步骤 |
+| William | 需要时做飞书冒烟；拍板 Ops 完成后是否开 M2b |
+
+### 11.8 完成后才允许
+
+- 开 M2b（多选组群 + @ 路由）评估与排期
+- 大改中继/网关协议
 
 ---
 
