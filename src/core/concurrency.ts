@@ -11,14 +11,15 @@ export class ChatConcurrency {
       release = r;
     });
     const next = prev.then(() => gate);
-    this.tails.set(chatId, next.catch(() => undefined));
+    const tail = next.catch(() => undefined);
+    this.tails.set(chatId, tail);
 
     await prev.catch(() => undefined);
     try {
       return await fn();
     } finally {
       release();
-      if (this.tails.get(chatId) === next) {
+      if (this.tails.get(chatId) === tail) {
         this.tails.delete(chatId);
       }
     }

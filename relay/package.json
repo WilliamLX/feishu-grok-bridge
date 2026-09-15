@@ -1,0 +1,13 @@
+{
+  "name": "feishu-grok-relay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local relay: Feishu HttpBackend → Grok Bot gateway (inbox/outbox)",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.mjs"
+  }
+}

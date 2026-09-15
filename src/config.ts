@@ -37,6 +37,8 @@ const EnvSchema = z.object({
   SESSION_MAX_COUNT: z.coerce.number().int().positive().default(500),
   DEDUPE_TTL_MS: z.coerce.number().int().positive().default(300_000),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+  BOT_CATALOG_PATH: z.string().optional().default('bots.json'),
+  BINDING_STORE_PATH: z.string().optional().default('data/bindings.json'),
 });
 
 export type AppConfig = {
@@ -55,6 +57,8 @@ export type AppConfig = {
   sessionMaxCount: number;
   dedupeTtlMs: number;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
+  botCatalogPath: string;
+  bindingStorePath: string;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -75,6 +79,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     sessionMaxCount: parsed.SESSION_MAX_COUNT,
     dedupeTtlMs: parsed.DEDUPE_TTL_MS,
     logLevel: parsed.LOG_LEVEL,
+    botCatalogPath: parsed.BOT_CATALOG_PATH,
+    bindingStorePath: parsed.BINDING_STORE_PATH,
   };
 }
 
@@ -111,5 +117,7 @@ export function redactSecrets(cfg: AppConfig): Record<string, unknown> {
     sessionMaxCount: cfg.sessionMaxCount,
     dedupeTtlMs: cfg.dedupeTtlMs,
     logLevel: cfg.logLevel,
+    botCatalogPath: cfg.botCatalogPath,
+    bindingStorePath: cfg.bindingStorePath,
   };
 }

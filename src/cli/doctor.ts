@@ -1,6 +1,7 @@
 import { loadConfig, missingRequired, redactSecrets } from '../config.js';
 import { fetchTenantTokenHttp, fetchBotInfo } from '../feishu/auth.js';
 import { initLogger, log } from '../logger.js';
+import { loadBotCatalogFromPath } from '../core/bots.js';
 
 export async function runDoctor(): Promise<number> {
   const cfg = loadConfig();
@@ -47,6 +48,19 @@ export async function runDoctor(): Promise<number> {
   } else {
     console.log(`✅ GROK_BACKEND=${cfg.grokBackend}`);
   }
+
+  const { catalog, warning } = loadBotCatalogFromPath(cfg.botCatalogPath);
+  if (warning) {
+    console.log(`⚠️  Bot catalog: ${warning}`);
+    console.log('   Copy bots.example.json → bots.json (or set BOT_CATALOG_PATH). Chat is fail-closed until catalog loads.');
+  } else {
+    const n = catalog.listEnabled().length;
+    console.log(`✅ Bot catalog ${cfg.botCatalogPath} — ${n} enabled bot(s)`);
+    if (n === 0) {
+      console.log('   ⚠️  Enabled list is empty — users cannot bind a Bot.');
+    }
+  }
+  console.log(`ℹ️  Binding store path: ${cfg.bindingStorePath} (restart-safe; delete the file to reset bindings)`);
 
   // Live token + bot identity probe only when credentials exist
   if (cfg.feishuAppId && cfg.feishuAppSecret) {

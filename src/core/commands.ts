@@ -1,10 +1,10 @@
-export type CommandName = 'help' | 'new' | 'status' | 'whoami' | 'stop';
+export type CommandName = 'help' | 'new' | 'status' | 'whoami' | 'stop' | 'bots' | 'bot';
 
 export type ParsedCommand =
   | { type: 'command'; name: CommandName; args: string }
   | { type: 'message'; text: string };
 
-const COMMANDS: CommandName[] = ['help', 'new', 'status', 'whoami', 'stop'];
+const COMMANDS: CommandName[] = ['help', 'new', 'status', 'whoami', 'stop', 'bots', 'bot'];
 
 /**
  * Parse leading /command from user text (after mention stripping).
@@ -30,8 +30,10 @@ export function helpText(): string {
     '`/status` — 当前会话状态',
     '`/whoami` — 显示你的 open_id / chat_id',
     '`/stop` — 暂停本会话自动回复（`/new` 恢复）',
+    '`/bots` — 列出并选择 Bot',
+    '`/bot <id>` — 绑定当前会话到指定 Bot（切换会清空历史）',
     '',
-    '直接发消息即可与 Grok 多轮对话。',
+    '直接发消息即可与已绑定的 Bot 多轮对话。',
   ].join('\n');
 }
 

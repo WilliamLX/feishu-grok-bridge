@@ -11,10 +11,10 @@ A production-oriented TypeScript Node.js bridge: Feishu WS → Bridge Core → G
 ```mermaid
 flowchart LR
   Feishu[Feishu/Lark App<br/>WS long connection]
-  Core[Bridge Core<br/>ACL · Session · Commands · Dedupe]
+  Core[Bridge Core<br/>ACL · Session · Commands · Dedupe · Bindings]
   BE[Grok Backend<br/>echo / http / cursor-agent]
-  Feishu -->|im.message.receive_v1| Core
-  Core -->|BackendRequest| BE
+  Feishu -->|im.message.receive_v1 / card.action.trigger| Core
+  Core -->|BackendRequest + agentId| BE
   BE -->|reply| Core
   Core -->|card / text reply| Feishu
 ```
@@ -25,8 +25,9 @@ flowchart LR
 
 - WebSocket 事件订阅（`im.message.receive_v1`），支持单聊 DM 与群聊 `@机器人`
 - 启动时通过 `bot/v3/info` 解析机器人 `open_id`，用于精确 `@` 匹配
-- 多轮会话（按 `chat_id`）、命令：`/help` `/new` `/status` `/whoami` `/stop`
-- 后端：`EchoBackend`（冒烟）、`HttpBackend`（Webhook JSON / SSE）、`CursorAgentBackend`（stub）
+- 多轮会话（按 `chat_id`）、命令：`/help` `/new` `/status` `/whoami` `/stop` `/bots` `/bot <id>`
+- **M2a 单聊选 Bot**：`bots.json` 目录；`chat_id → agentId` 持久化（默认 `data/bindings.json`）；交互卡片或命令绑定；切换 Bot 清空会话且丢弃旧 Agent 在途回复；未知 agentId **fail-closed，绝不静默默认 Bot**
+- 后端：`EchoBackend`（冒烟）、`HttpBackend`（Webhook JSON / SSE，请求级 `agentId`）、`CursorAgentBackend`（stub）
 - 安全：`ALLOW_FROM` **空 = 拒绝普通对话**（fail-closed）；允许 bootstrap `/whoami`；`ALLOW_CHATS`；群聊 `REQUIRE_MENTION`
 - 内存会话：空闲淘汰 + 最大会话数；**进程重启清空**会话与去重状态（无 Redis）
 - CLI：`doctor` / `start` / `status`
@@ -43,7 +44,7 @@ flowchart LR
    - `im:chat`（按需）
 4. **事件订阅**：
    - 选择 **长连接 / WebSocket** 模式（不是「将事件发送至开发者服务器」HTTP 回调）。
-   - 添加事件：`im.message.receive_v1`。
+   - 添加事件：`im.message.receive_v1`；选 Bot 卡片还需 **`card.action.trigger`**（无卡片权限时仍可用 `/bots` `/bot <id>`）。
    - 保存后需本地/服务器先跑起本 bridge，再在控制台确认长连接就绪。
 5. **机器人**：启用机器人能力；可配置默认名称/描述。
 6. **版本管理与发布**：创建版本 → 申请线上发布 → 管理员审批通过后，企业内可用。
@@ -76,6 +77,8 @@ cp .env.example .env
 | `GROK_BOT_WEBHOOK_URL` | `http` 后端 POST 地址 |
 | `GROK_BOT_WEBHOOK_TOKEN` | 可选 Bearer Token |
 | `GROK_HTTP_TIMEOUT_MS` | HTTP 超时，默认 120000 |
+| `BOT_CATALOG_PATH` | Bot 目录 JSON，默认 `bots.json`（见 `bots.example.json`）。每个 `id` 必须是 sendPrompt 用的真实 Grok Bot agent UUID；示例文件里的 `grok-main` / `grok-code` 仅为占位 |
+| `BINDING_STORE_PATH` | `chat_id → agent_id` 持久化文件，默认 `data/bindings.json`；删除该文件即重置绑定 |
 | `SESSION_MAX_HISTORY` | 每会话保留历史条数 |
 | `SESSION_IDLE_TTL_MS` | 会话空闲淘汰（默认 1h） |
 | `SESSION_MAX_COUNT` | 内存会话上限（默认 500） |
@@ -113,7 +116,7 @@ npm run doctor
 npm run dev
 ```
 
-在飞书对机器人发：`你好` 或 `/help`。应收到带 session 元数据的 Echo 卡片回复。
+在飞书对机器人发：`/bots` → `/bot grok-main`（或点卡片）→ `你好` 或 `/help`。未绑定就发消息会提示去选 Bot。Echo 卡片会带上 `agent` 元数据。
 
 ### HttpBackend 契约（curl）
 
@@ -127,6 +130,7 @@ curl -sS -X POST "$GROK_BOT_WEBHOOK_URL" \
     "sessionId": "sess_xxx",
     "chatId": "oc_xxx",
     "userId": "ou_xxx",
+    "agentId": "grok-main",
     "text": "用户输入",
     "history": [
       {"role": "user", "content": "上一轮"},
@@ -135,7 +139,7 @@ curl -sS -X POST "$GROK_BOT_WEBHOOK_URL" \
   }'
 ```
 
-期望响应：
+- 中继（`relay/server.mjs`）必须按请求体里的 `agentId` 路由：缺失 → `400`；目录已加载且未知 → `404`（`unknown agent`）。**禁止静默落到默认 Bot**（不读 `GROK_BOT_AGENT_ID`）。详见 `relay/README.md`。
 
 - JSON：`{"reply":"……"}`（也接受 `message` 字段）
 - 或 SSE：`data: {"reply":"……"}` / `data: {"delta":"…"}` 流式拼接
@@ -157,7 +161,7 @@ http.createServer(async (req, res) => {
   for await (const c of req) chunks.push(c);
   const body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
   res.setHeader('content-type', 'application/json');
-  res.end(JSON.stringify({ reply: `got: ${body.text}` }));
+  res.end(JSON.stringify({ reply: `got: ${body.agentId} ${body.text}` }));
 }).listen(8787, () => console.log('webhook :8787'));
 ```
 
@@ -172,6 +176,10 @@ http.createServer(async (req, res) => {
 | `/status` | Bridge + 本会话状态 |
 | `/whoami` | 显示 `open_id` / `chat_id`（`ALLOW_FROM` 为空时也可 bootstrap） |
 | `/stop` | 暂停本会话（`/new` 恢复） |
+| `/bots` | 列出可用 Bot（交互卡片按钮可选） |
+| `/bot <id>` | 绑定当前 chat 到该 Agent；切换会清空历史 |
+
+`/new` **只清历史、不清绑定**。绑定存在 `BINDING_STORE_PATH`（默认 `data/bindings.json`）；重启进程会话会丢，绑定还在。重置绑定：删掉该文件后重启。
 
 ---
 
@@ -182,8 +190,12 @@ feishu-grok-bridge/
 ├── src/
 │   ├── backend/          # GrokBackend · Echo · Http · CursorAgent stub
 │   ├── cli/              # doctor · start · status
-│   ├── core/             # session · acl · commands · dedupe · concurrency · bridge
-│   ├── feishu/           # auth · ws · message · mention
+│   ├── core/             # session · acl · commands · dedupe · concurrency · bridge · bots · binding
+│   ├── feishu/           # auth · ws · message · mention · card
+├── bots.json / bots.example.json  # id = 真实 agent UUID（示例为占位）
+├── relay/                # HttpBackend → gateway 中继（POST /turn 要求 agentId）
+├── inbox/ outbox/ archive/  # 中继作业目录（gitignored）
+├── data/                 # bindings.json（gitignored）
 │   ├── im/               # 未来多 IM 适配（钉钉 stub）
 │   ├── config.ts
 │   ├── logger.ts

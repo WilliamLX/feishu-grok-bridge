@@ -3,6 +3,7 @@ import { BridgeCore, PROCESSING_ACK_TEXT } from '../src/core/bridge.js';
 import type { AppConfig } from '../src/config.js';
 import type { GrokBackend } from '../src/backend/types.js';
 import type { IncomingMessage } from '../src/feishu/ws.js';
+import { testBindings, testCatalog } from './helpers.js';
 
 function baseCfg(over: Partial<AppConfig> = {}): AppConfig {
   return {
@@ -21,6 +22,8 @@ function baseCfg(over: Partial<AppConfig> = {}): AppConfig {
     sessionMaxCount: 50,
     dedupeTtlMs: 60_000,
     logLevel: 'error',
+    botCatalogPath: 'bots.json',
+    bindingStorePath: 'data/bindings.json',
     ...over,
   };
 }
@@ -72,6 +75,8 @@ describe('processing ack', () => {
       client,
       backend,
       botOpenId: 'ou_bot',
+      catalog: testCatalog(),
+      bindings: testBindings(['oc_1']),
     });
 
     const done = bridge.handleIncoming(msg({ contentRaw: JSON.stringify({ text: 'ping' }) }));
@@ -107,6 +112,8 @@ describe('processing ack', () => {
       client,
       backend,
       botOpenId: 'ou_bot',
+      catalog: testCatalog(),
+      bindings: testBindings(['oc_1']),
     });
 
     await bridge.handleIncoming(
@@ -134,6 +141,8 @@ describe('processing ack', () => {
       client,
       backend,
       botOpenId: 'ou_bot',
+      catalog: testCatalog(),
+      bindings: testBindings(['oc_1']),
     });
 
     await bridge.handleIncoming(
@@ -192,6 +201,8 @@ describe('processing ack', () => {
       client: slowClient,
       backend,
       botOpenId: 'ou_bot',
+      catalog: testCatalog(),
+      bindings: testBindings(['oc_same']),
     });
 
     const a = bridge.handleIncoming(
@@ -267,6 +278,8 @@ describe('processing ack', () => {
       client,
       backend,
       botOpenId: 'ou_bot',
+      catalog: testCatalog(),
+      bindings: testBindings(['oc_hist']),
     });
 
     const a = bridge.handleIncoming(

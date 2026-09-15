@@ -29,4 +29,14 @@ describe('ChatConcurrency', () => {
     expect(order.indexOf('a-end')).toBeLessThan(order.indexOf('b-start'));
     expect(order).toContain('c');
   });
+
+  it('clears pending count after the last job finishes', async () => {
+    const c = new ChatConcurrency();
+
+    await c.run('chat1', async () => {
+      expect(c.pendingCount()).toBe(1);
+    });
+
+    expect(c.pendingCount()).toBe(0);
+  });
 });

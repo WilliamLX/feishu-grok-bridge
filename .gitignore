@@ -8,3 +8,8 @@ coverage/
 *.tsbuildinfo
 .vscode/
 .idea/
+data/bindings.json
+data/bindings.json.tmp
+inbox/
+outbox/
+archive/

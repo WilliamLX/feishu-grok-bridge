@@ -3,6 +3,7 @@ import { BridgeCore, sanitizeBackendErrorForUser } from '../src/core/bridge.js';
 import type { AppConfig } from '../src/config.js';
 import type { GrokBackend } from '../src/backend/types.js';
 import type { IncomingMessage } from '../src/feishu/ws.js';
+import { testBindings, testCatalog } from './helpers.js';
 
 function baseCfg(over: Partial<AppConfig> = {}): AppConfig {
   return {
@@ -21,6 +22,8 @@ function baseCfg(over: Partial<AppConfig> = {}): AppConfig {
     sessionMaxCount: 50,
     dedupeTtlMs: 60_000,
     logLevel: 'error',
+    botCatalogPath: 'bots.json',
+    bindingStorePath: 'data/bindings.json',
     ...over,
   };
 }
@@ -82,6 +85,8 @@ describe('BridgeCore ACL / mention / bootstrap', () => {
       client,
       backend,
       botOpenId: 'ou_bot',
+      catalog: testCatalog(),
+      bindings: testBindings(),
     });
     const contents = await captureReply(
       bridge,
@@ -101,6 +106,8 @@ describe('BridgeCore ACL / mention / bootstrap', () => {
       client,
       backend,
       botOpenId: 'ou_bot',
+      catalog: testCatalog(),
+      bindings: testBindings(),
     });
     const contents = await captureReply(
       bridge,
@@ -116,6 +123,8 @@ describe('BridgeCore ACL / mention / bootstrap', () => {
       client,
       backend,
       botOpenId: 'ou_bot',
+      catalog: testCatalog(),
+      bindings: testBindings(['oc_g']),
     });
     // Mention someone else — should be denied silently (no reply for mention miss)
     await captureReply(
@@ -148,6 +157,8 @@ describe('BridgeCore ACL / mention / bootstrap', () => {
       cfg: baseCfg(),
       client,
       backend,
+      catalog: testCatalog(),
+      bindings: testBindings(['oc_g']),
       // botOpenId undefined
     });
     await captureReply(
@@ -169,6 +180,8 @@ describe('BridgeCore ACL / mention / bootstrap', () => {
       client,
       backend,
       botOpenId: 'ou_bot',
+      catalog: testCatalog(),
+      bindings: testBindings(['oc_1']),
     });
     const contents = await captureReply(bridge, msg());
     const joined = contents.join('\n');
@@ -182,6 +195,8 @@ describe('BridgeCore ACL / mention / bootstrap', () => {
       client,
       backend,
       botOpenId: 'ou_bot',
+      catalog: testCatalog(),
+      bindings: testBindings(),
     });
     const contents = await captureReply(
       bridge,
@@ -207,6 +222,8 @@ describe('BridgeCore ACL / mention / bootstrap', () => {
       client,
       backend,
       botOpenId: 'ou_bot',
+      catalog: testCatalog(),
+      bindings: testBindings(['oc_g']),
     });
     await captureReply(
       bridge,
@@ -233,6 +250,8 @@ describe('BridgeCore ACL / mention / bootstrap', () => {
       client,
       backend,
       botOpenId: 'ou_bot',
+      catalog: testCatalog(),
+      bindings: testBindings(),
     });
     const contents = await captureReply(
       bridge,

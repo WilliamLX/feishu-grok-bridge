@@ -8,6 +8,8 @@ export type BackendRequest = {
   chatId: string;
   userId: string;
   text: string;
+  /** Bound Grok Agent id. HttpBackend requires this; never invent a default. */
+  agentId?: string;
   history?: BackendHistoryItem[];
 };
 

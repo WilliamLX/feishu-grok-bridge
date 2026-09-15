@@ -10,6 +10,7 @@ const sampleReq: BackendRequest = {
   sessionId: 'sess_1',
   chatId: 'oc_chat',
   userId: 'ou_user',
+  agentId: 'grok-main',
   text: 'hello',
   history: [
     { role: 'user', content: 'hi' },
@@ -23,6 +24,7 @@ describe('shapeHttpRequest', () => {
       sessionId: 'sess_1',
       chatId: 'oc_chat',
       userId: 'ou_user',
+      agentId: 'grok-main',
       text: 'hello',
       history: sampleReq.history,
     });
@@ -31,6 +33,14 @@ describe('shapeHttpRequest', () => {
   it('omits empty history', () => {
     const body = shapeHttpRequest({ ...sampleReq, history: [] });
     expect(body).not.toHaveProperty('history');
+    expect(body.agentId).toBe('grok-main');
+  });
+
+  it('does not invent a default agentId', () => {
+    const { agentId: _drop, ...rest } = sampleReq;
+    void _drop;
+    const body = shapeHttpRequest({ ...rest, history: [] });
+    expect(body).not.toHaveProperty('agentId');
   });
 });
 
@@ -77,6 +87,7 @@ describe('HttpBackend.handle', () => {
       const body = JSON.parse(String(init?.body));
       expect(body.sessionId).toBe('sess_1');
       expect(body.text).toBe('hello');
+      expect(body.agentId).toBe('grok-main');
       expect((init?.headers as Record<string, string>).authorization).toBe('Bearer tok');
       return new Response(JSON.stringify({ reply: 'from-http' }), {
         status: 200,
@@ -92,6 +103,15 @@ describe('HttpBackend.handle', () => {
     const out = await backend.handle(sampleReq);
     expect(out.reply).toBe('from-http');
     expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it('refuses to POST without agentId (no default bot)', async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const backend = new HttpBackend({ url: 'http://example.test/turn', fetchImpl });
+    const { agentId: _a, ...rest } = sampleReq;
+    void _a;
+    await expect(backend.handle(rest)).rejects.toThrow(/agentId is required/);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('throws on non-OK HTTP', async () => {
