@@ -5,20 +5,21 @@ Local Node.js relay that sits between the Feishu bridge `HttpBackend` and the Gr
 ```
 Feishu bridge (GROK_BACKEND=http)
   → POST http://127.0.0.1:8787/turn  { agentId, text, ... }
-  → relay validates agentId (required; optional catalog allowlist)
+  → relay validates agentId (required; catalog allowlist is mandatory)
   → writes inbox/<jobId>.json (includes agentId)
   → POST gateway /api/sendPrompt { agentId, prompt }  (marked [FEISHU_BRIDGE_JOB])
   → Grok Bot writes outbox/<jobId>.json {"reply":"..."}
   → relay returns {"reply":"..."} to HttpBackend
 ```
 
-**Hard rule (M2a §5.2):** `agentId` is required on every `/turn`. There is **no** silent default (`GROK_BOT_AGENT_ID` / hardcoded UUID are not used as fallback). Missing/empty/whitespace → `400`; unknown vs enabled catalog (when loaded) → `404`.
+**Hard rule (M2a §5.2):** `agentId` is required on every `/turn`. There is **no** silent default (`GROK_BOT_AGENT_ID` / hardcoded UUID are not used as fallback). Missing/empty/whitespace → `400`; unknown vs the enabled catalog → `404`. The relay refuses to start when the catalog is missing, malformed, or has no enabled Bot.
 
 ## Requirements
 
 - Node.js 20+
 - Zero npm dependencies
 - Gateway config at `/home/box/agent-data/gateway.json` (`token`, `port`)
+- A valid `bots.json` catalog (or `BOT_CATALOG_PATH`) with at least one enabled Bot
 
 ## Start
 
@@ -87,9 +88,10 @@ node relay/test-agentid.mjs
 |-----|---------|---------|
 | `GROK_RELAY_PORT` | `8787` | Listen port |
 | `GROK_RELAY_TIMEOUT_MS` | `120000` | Outbox poll timeout |
+| `GROK_RELAY_GATEWAY_TIMEOUT_MS` | `15000` | Gateway `sendPrompt` request timeout |
 | `GROK_BOT_WEBHOOK_TOKEN` | _(empty)_ | If set, require `Authorization: Bearer …` on `/turn` |
 | `GROK_GATEWAY_JSON` | `/home/box/agent-data/gateway.json` | Gateway token/port file |
-| `BOT_CATALOG_PATH` | `bots.json` (under bridge root) | Optional allowlist of enabled `id`s. If the file exists and loads, unknown agentId → 404. If missing/unloadable, allowlist is skipped. |
+| `BOT_CATALOG_PATH` | `bots.json` (under bridge root) | Required allowlist of enabled `id`s. Missing/unloadable/empty catalog stops relay startup; unknown agentId → 404. |
 
 `GROK_BOT_AGENT_ID` is **not** read. Catalog / request body must supply the real agent UUID.
 
