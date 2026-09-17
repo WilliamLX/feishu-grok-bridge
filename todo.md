@@ -257,13 +257,15 @@ Bridge（Node，feishu-grok-bridge）
 #### A. 启动前：保证单实例
 
 ```bash
-# 查出旧 bridge（按实际启动命令调整）
-pgrep -af 'feishu-grok-bridge|tsx.*cli|node.*dist/cli' || true
-# 有残留则杀掉，只留一份
+# 现网死命令（本机 2026-09-17 已用过）
+pgrep -af 'dist/cli/index.js start|relay/server.mjs' || echo 'none'
+# 清干净（按需；先停 bridge 再停中继）
+pkill -f 'dist/cli/index.js start' || true
+pkill -f 'relay/server.mjs' || true
 ```
 
-- [ ] 启动前无第二份 bridge
-- [ ] 中继同样确认只监听一个 `:8787`
+- [x] 启动前无第二份 bridge（2026-09-17：清残留后只留一份 `npm start`）
+- [x] 中继同样确认只监听一个 `:8787`（`node relay/server.mjs` → `listening http://127.0.0.1:8787`）
 
 #### B. 启动顺序（建议）
 
@@ -273,8 +275,12 @@ pgrep -af 'feishu-grok-bridge|tsx.*cli|node.*dist/cli' || true
 4. 启动 bridge：`npm run dev` 或 `npm start`
 5. 日志应见：中继 catalog loaded / bridge WS ready、`catalogSize` 正确
 
-- [ ] 按序启动成功
-- [ ] 写下本机实际命令到本节备注（由 DingDing 补）
+- [x] 按序启动成功（2026-09-17：先 `node relay/server.mjs`，再 `npm start`）
+- [x] 本机实际命令：
+  - 查：`pgrep -af 'dist/cli/index.js start|relay/server.mjs'`
+  - 停：`pkill -f 'dist/cli/index.js start'` 然后 `pkill -f 'relay/server.mjs'`
+  - 启：`node relay/server.mjs` → `npm start`
+  - 验：`curl -s http://127.0.0.1:8787/health`；日志 `ws client ready` + `catalogSize=2`
 
 #### C. 更新 bots.json
 
@@ -283,7 +289,7 @@ pgrep -af 'feishu-grok-bridge|tsx.*cli|node.*dist/cli' || true
 3. **重启 bridge + 中继**（中继启动时加载目录；bridge 亦读目录）
 4. `/bots` 核对列表
 
-- [ ] 现网 `bots.json` 已核对
+- [x] 现网 `bots.json` 已核对（2026-09-17：DingDing `d84209f0-…` + SE001 `ad78b5fa-…`，enabled=2；bridge `catalogSize=2`，中继 `enabled=2`）
 - [ ] 变更流程写入 README 交叉链接（可选）
 
 #### D. 飞书卡片回调（若要用按钮）
@@ -316,8 +322,8 @@ pgrep -af 'feishu-grok-bridge|tsx.*cli|node.*dist/cli' || true
 
 | # | 项 | 负责人 | 状态 |
 | --- | --- | --- | --- |
-| O1 | 单实例启动写清且可复现 | DingDing | ⬜ |
-| O2 | `bots.json` 真实 UUID + 加载验证 | DingDing | ⬜ |
+| O1 | 单实例启动写清且可复现 | DingDing | ✅ 死命令已写入 11.4 A/B（2026-09-17） |
+| O2 | `bots.json` 真实 UUID + 加载验证 | DingDing | ✅ 现网 2 个 UUID，catalogSize=2（2026-09-17） |
 | O3 | 发版/卡片回调/审批备忘完整 | DingDing + 产品 | ⬜ |
 | O4 | 坏/缺 agentId 必 4xx（有命令可复测） | DingDing + 审核 | ✅ 代码 smoke（2026-09-16） |
 | O5 | §11.5 冒烟全绿一次并记录日期 | William 或指定人 | ⬜ |
