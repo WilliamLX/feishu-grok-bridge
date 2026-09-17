@@ -1,15 +1,15 @@
 {
   "bots": [
     {
-      "id": "grok-main",
-      "name": "Grok",
-      "description": "主对话 Agent（id 必须是 sendPrompt 使用的真实 Grok Bot agent UUID（不是展示用 slug））",
+      "id": "d84209f0-28d9-4485-86fb-85795e6510ec",
+      "name": "DingDing",
+      "description": "DingDing Grok Bot",
       "enabled": true
     },
     {
-      "id": "grok-code",
-      "name": "Grok Code",
-      "description": "示例第二个 Agent（id 必须是 sendPrompt 使用的真实 Grok Bot agent UUID（不是展示用 slug））",
+      "id": "ad78b5fa-4212-4476-a83a-e0ed29e5918b",
+      "name": "SE001",
+      "description": "SE001 Grok Bot",
       "enabled": true
     }
   ]

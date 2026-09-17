@@ -12,6 +12,7 @@
     "start": "node dist/cli/index.js start",
     "build": "tsc",
     "test": "vitest run",
+    "relay:smoke": "node relay/test-agentid.mjs",
     "test:watch": "vitest",
     "doctor": "tsx src/cli/index.ts doctor",
     "status": "tsx src/cli/index.ts status",

@@ -77,7 +77,7 @@ cp .env.example .env
 | `GROK_BOT_WEBHOOK_URL` | `http` 后端 POST 地址 |
 | `GROK_BOT_WEBHOOK_TOKEN` | 可选 Bearer Token |
 | `GROK_HTTP_TIMEOUT_MS` | HTTP 超时，默认 120000 |
-| `BOT_CATALOG_PATH` | Bot 目录 JSON，默认 `bots.json`（见 `bots.example.json`）。每个 `id` 必须是 sendPrompt 用的真实 Grok Bot agent UUID；示例文件里的 `grok-main` / `grok-code` 仅为占位 |
+| `BOT_CATALOG_PATH` | Bot 目录 JSON，默认 `bots.json`（见 `bots.example.json`）。每个 `id` 必须是 sendPrompt 用的真实 Grok Bot agent UUID；`bots.example.json` 中的 slug 仅为占位 |
 | `BINDING_STORE_PATH` | `chat_id → agent_id` 持久化文件，默认 `data/bindings.json`；删除该文件即重置绑定 |
 | `SESSION_MAX_HISTORY` | 每会话保留历史条数 |
 | `SESSION_IDLE_TTL_MS` | 会话空闲淘汰（默认 1h） |
@@ -116,7 +116,21 @@ npm run doctor
 npm run dev
 ```
 
-在飞书对机器人发：`/bots` → `/bot grok-main`（或点卡片）→ `你好` 或 `/help`。未绑定就发消息会提示去选 Bot。Echo 卡片会带上 `agent` 元数据。
+在飞书对机器人发：`/bots` → 按列表中的真实 ID 发送 `/bot <id>`（或点卡片）→ `你好` 或 `/help`。未绑定就发消息会提示去选 Bot。Echo 卡片会带上 `agent` 元数据。
+
+### HttpBackend + 本地 relay
+
+需要两个终端，先启动 relay，再启动 bridge：
+
+```bash
+# terminal 1：需要先准备真实 bots.json 和 gateway.json
+node relay/server.mjs
+
+# terminal 2
+GROK_BACKEND=http npm run dev
+```
+
+relay 启动时必须成功加载 `BOT_CATALOG_PATH`；目录缺失、格式错误或没有启用 Bot 时直接退出，避免未知 `agentId` 绕过 allowlist。
 
 ### HttpBackend 契约（curl）
 
@@ -130,7 +144,7 @@ curl -sS -X POST "$GROK_BOT_WEBHOOK_URL" \
     "sessionId": "sess_xxx",
     "chatId": "oc_xxx",
     "userId": "ou_xxx",
-    "agentId": "grok-main",
+    "agentId": "d84209f0-28d9-4485-86fb-85795e6510ec",
     "text": "用户输入",
     "history": [
       {"role": "user", "content": "上一轮"},
@@ -218,6 +232,7 @@ feishu-grok-bridge/
 | `npm test` | Vitest 单元测试 |
 | `npm run doctor` | 配置体检 |
 | `npm run build` | `tsc` |
+| `npm run relay:smoke` | 中继 `agentId` 合同冒烟（缺失/错误 ID 必须 4xx） |
 
 ---
 

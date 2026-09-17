@@ -20,18 +20,55 @@ const SERVER = path.join(__dirname, 'server.mjs');
 
 function listenStubGateway() {
   return new Promise((resolve) => {
+    const jobs = [];
     const srv = http.createServer((req, res) => {
-      // Accept sendPrompt so unknown-agent path isn't hit after catalog check
       let body = '';
       req.on('data', (c) => (body += c));
-      req.on('end', () => {
+      req.on('end', async () => {
+        const parsed = JSON.parse(body);
+        const jobId = parsed.prompt?.match(/^jobId: (.+)$/m)?.[1];
+        const outboxPath = parsed.prompt?.match(/^outbox: (.+)$/m)?.[1];
+        jobs.push({ agentId: parsed.agentId, jobId, outboxPath });
+        if (outboxPath) {
+          await fsp.writeFile(
+            outboxPath,
+            JSON.stringify({ reply: `stub:${parsed.agentId}` }),
+            'utf8',
+          );
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ accepted: true }));
       });
     });
     srv.listen(0, '127.0.0.1', () => {
       const { port } = srv.address();
-      resolve({ srv, port });
+      resolve({ srv, port, jobs });
+    });
+  });
+}
+
+function pickFreePort() {
+  return new Promise((resolve) => {
+    const s = http.createServer();
+    s.listen(0, '127.0.0.1', () => {
+      const { port } = s.address();
+      s.close(() => resolve(port));
+    });
+  });
+}
+
+function waitForExit(child, ms = 5000) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
+  }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error('child process exit timeout'));
+    }, ms);
+    child.once('exit', (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code, signal });
     });
   });
 }
@@ -83,20 +120,13 @@ async function main() {
     }),
   );
 
-  const { srv: gw, port: gwPort } = await listenStubGateway();
+  const { srv: gw, port: gwPort, jobs } = await listenStubGateway();
   await fsp.writeFile(
     gwPath,
     JSON.stringify({ token: 'test-token-not-secret-for-unit', port: gwPort }),
   );
 
-  // Pick a free loopback port for the relay
-  const relayPort = await new Promise((resolve) => {
-    const s = http.createServer();
-    s.listen(0, '127.0.0.1', () => {
-      const { port } = s.address();
-      s.close(() => resolve(port));
-    });
-  });
+  const relayPort = await pickFreePort();
   const child = spawn(process.execPath, [SERVER], {
     cwd: ROOT,
     env: {
@@ -104,6 +134,7 @@ async function main() {
       GROK_RELAY_PORT: String(relayPort),
       GROK_GATEWAY_JSON: gwPath,
       BOT_CATALOG_PATH: catalogPath,
+      GROK_RELAY_GATEWAY_TIMEOUT_MS: '1000',
       GROK_BOT_WEBHOOK_TOKEN: '',
       // Ensure env default is NOT used even if set in parent
       GROK_BOT_AGENT_ID: 'should-never-be-used',
@@ -141,6 +172,18 @@ async function main() {
       console.log('ok: whitespace agentId → 400');
     }
 
+    const nonObject = await postTurn(relayPort, null);
+    if (
+      nonObject.status !== 400 ||
+      nonObject.json?.error !== 'JSON body must be an object'
+    ) {
+      failures.push(
+        `non-object JSON body: got ${nonObject.status} ${JSON.stringify(nonObject.json)}`,
+      );
+    } else {
+      console.log('ok: non-object JSON body → 400');
+    }
+
     const unknown = await postTurn(relayPort, {
       agentId: '00000000-0000-0000-0000-000000000000',
       text: 'hi',
@@ -153,10 +196,62 @@ async function main() {
     } else {
       console.log('ok: fake agentId not in catalog → 404');
     }
+
+    const validAgentId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const valid = await postTurn(relayPort, {
+      agentId: validAgentId,
+      chatId: 'oc_test',
+      text: 'hello',
+    });
+    const validJob = jobs.at(-1);
+    if (
+      valid.status !== 200 ||
+      valid.json?.reply !== `stub:${validAgentId}` ||
+      validJob?.agentId !== validAgentId ||
+      !validJob.jobId
+    ) {
+      failures.push(`valid agentId turn: got ${valid.status} ${JSON.stringify(valid.json)}`);
+    } else {
+      const archivePath = path.join(ROOT, 'archive', `${validJob.jobId}.json`);
+      const inboxPath = path.join(ROOT, 'inbox', `${validJob.jobId}.json`);
+      if (!fs.existsSync(archivePath) || fs.existsSync(inboxPath)) {
+        failures.push('successful turn did not archive inbox job');
+      } else {
+        console.log('ok: valid agentId turn → 200 and inbox archived');
+      }
+      await fsp.rm(validJob.outboxPath, { force: true });
+      await fsp.rm(archivePath, { force: true });
+    }
   } finally {
     child.kill('SIGTERM');
-    await new Promise((r) => child.on('exit', r));
-    gw.close();
+    await waitForExit(child);
+
+    const missingCatalogChild = spawn(process.execPath, [SERVER], {
+      cwd: ROOT,
+      env: {
+        ...process.env,
+        GROK_RELAY_PORT: String(await pickFreePort()),
+        GROK_GATEWAY_JSON: gwPath,
+        BOT_CATALOG_PATH: path.join(tmp, 'missing-bots.json'),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let missingCatalogLog = '';
+    missingCatalogChild.stdout.on('data', (d) => (missingCatalogLog += d));
+    missingCatalogChild.stderr.on('data', (d) => (missingCatalogLog += d));
+    const missingCatalogExit = await waitForExit(missingCatalogChild);
+    if (
+      missingCatalogExit.code !== 1 ||
+      !missingCatalogLog.includes('catalog file not found')
+    ) {
+      failures.push(
+        `missing catalog startup: got ${JSON.stringify(missingCatalogExit)} ${missingCatalogLog}`,
+      );
+    } else {
+      console.log('ok: missing catalog → relay refuses to start');
+    }
+
+    await new Promise((resolve) => gw.close(resolve));
     try {
       await fsp.rm(tmp, { recursive: true, force: true });
     } catch {

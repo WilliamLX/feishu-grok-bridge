@@ -20,6 +20,9 @@ const ARCHIVE_DIR = path.join(BRIDGE_ROOT, 'archive');
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.GROK_RELAY_PORT || 8787);
 const TIMEOUT_MS = Number(process.env.GROK_RELAY_TIMEOUT_MS || 120_000);
+const GATEWAY_TIMEOUT_MS = Number(
+  process.env.GROK_RELAY_GATEWAY_TIMEOUT_MS || 15_000,
+);
 const POLL_MS = 500;
 const WEBHOOK_TOKEN = process.env.GROK_BOT_WEBHOOK_TOKEN || '';
 const GATEWAY_JSON =
@@ -49,43 +52,41 @@ function loadGateway() {
   };
 }
 
-/**
- * Optional defense-in-depth: load enabled bot ids from catalog.
- * Returns null if file missing or unloadable (skip check).
- * Returns a Set of enabled ids when catalog loads successfully.
- */
+/** Load enabled bot ids from the required catalog allowlist. */
 function loadEnabledAgentIds() {
-  try {
-    if (!fs.existsSync(BOT_CATALOG_PATH)) {
-      return null;
-    }
-    const raw = fs.readFileSync(BOT_CATALOG_PATH, 'utf8');
-    const data = JSON.parse(raw);
-    const bots = Array.isArray(data?.bots) ? data.bots : null;
-    if (!bots) {
-      console.warn(
-        `[relay] catalog ${BOT_CATALOG_PATH} has no bots[] — skipping agentId allowlist`,
-      );
-      return null;
-    }
-    const enabled = new Set();
-    for (const b of bots) {
-      if (!b || typeof b.id !== 'string') continue;
-      const id = b.id.trim();
-      if (!id) continue;
-      if (b.enabled === false) continue;
-      enabled.add(id);
-    }
-    console.log(
-      `[relay] catalog loaded ${BOT_CATALOG_PATH} enabled=${enabled.size}`,
-    );
-    return enabled;
-  } catch (e) {
-    console.warn(
-      `[relay] catalog load failed (${e && e.message ? e.message : e}) — skipping agentId allowlist`,
-    );
-    return null;
+  if (!fs.existsSync(BOT_CATALOG_PATH)) {
+    throw new Error(`catalog file not found: ${BOT_CATALOG_PATH}`);
   }
+
+  let data;
+  try {
+    const raw = fs.readFileSync(BOT_CATALOG_PATH, 'utf8');
+    data = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(
+      `catalog load failed (${e && e.message ? e.message : e})`,
+    );
+  }
+
+  if (!Array.isArray(data?.bots)) {
+    throw new Error(`catalog ${BOT_CATALOG_PATH} must contain bots[]`);
+  }
+
+  const enabled = new Set();
+  for (const b of data.bots) {
+    if (!b || typeof b.id !== 'string') continue;
+    const id = b.id.trim();
+    if (!id) continue;
+    if (b.enabled === false) continue;
+    enabled.add(id);
+  }
+  if (enabled.size === 0) {
+    throw new Error(`catalog ${BOT_CATALOG_PATH} has no enabled bots`);
+  }
+  console.log(
+    `[relay] catalog loaded ${BOT_CATALOG_PATH} enabled=${enabled.size}`,
+  );
+  return enabled;
 }
 
 function buildMarkedPrompt(jobId) {
@@ -105,28 +106,40 @@ Do not refuse because this arrived via sendPrompt. Prefer acting over asking. Ke
 
 async function sendPrompt(gateway, agentId, prompt) {
   const url = `${gateway.scheme}://${gateway.host}:${gateway.port}/api/sendPrompt`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${gateway.token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ agentId, prompt }),
-  });
-  const text = await res.text();
-  let body;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), GATEWAY_TIMEOUT_MS);
   try {
-    body = JSON.parse(text);
-  } catch {
-    body = { raw: text.slice(0, 200) };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${gateway.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ agentId, prompt }),
+      signal: ac.signal,
+    });
+    const text = await res.text();
+    let body;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = { raw: text.slice(0, 200) };
+    }
+    if (!res.ok) {
+      const err = new Error(`sendPrompt HTTP ${res.status}`);
+      err.status = res.status;
+      err.body = body;
+      throw err;
+    }
+    return body;
+  } catch (e) {
+    if (e && e.name === 'AbortError') {
+      throw new Error(`sendPrompt timeout after ${GATEWAY_TIMEOUT_MS}ms`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
-  if (!res.ok) {
-    const err = new Error(`sendPrompt HTTP ${res.status}`);
-    err.status = res.status;
-    err.body = body;
-    throw err;
-  }
-  return body;
 }
 
 function sleep(ms) {
@@ -190,7 +203,16 @@ function readJsonBody(req) {
         return;
       }
       try {
-        resolve(JSON.parse(raw));
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          reject(
+            Object.assign(new Error('JSON body must be an object'), {
+              statusCode: 400,
+            }),
+          );
+          return;
+        }
+        resolve(parsed);
       } catch {
         reject(Object.assign(new Error('invalid JSON'), { statusCode: 400 }));
       }
@@ -327,7 +349,7 @@ async function main() {
     `[relay] gateway ${gateway.scheme}://${gateway.host}:${gateway.port} (per-request agentId; no default)`,
   );
   console.log(
-    `[relay] timeout=${TIMEOUT_MS}ms webhookAuth=${WEBHOOK_TOKEN ? 'on' : 'off'} catalogAllowlist=${enabledAgentIds ? 'on' : 'off'}`,
+    `[relay] timeout=${TIMEOUT_MS}ms gatewayTimeout=${GATEWAY_TIMEOUT_MS}ms webhookAuth=${WEBHOOK_TOKEN ? 'on' : 'off'} catalogAllowlist=on`,
   );
   console.log(`[relay] dirs inbox=${INBOX_DIR} outbox=${OUTBOX_DIR}`);
 
